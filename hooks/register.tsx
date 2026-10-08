@@ -117,6 +117,15 @@ async function prepare($: EngineInterface, raw: string, title?: string): Promise
     const conv = await $.process.run(['sips', '-s', 'format', 'png', real, '--out', png])
     if (conv.exitCode !== 0) throw new Error(`could not convert ${real}: ${conv.stderr.trim()}`)
   }
+  // A picture travels as bytes, at most 2 MiB: shrink a big one.
+  const size = await $.fs.stat(png)
+  if ((size.size ?? 0) > 1_800_000) {
+    generation += 1
+    const small = `${TMP}/${png.split('/').pop()!.replace(/\.png$/i, '')}-${generation}-small.png`
+    await $.process.run(['mkdir', '-p', TMP])
+    await $.process.run(['sips', '-Z', '1800', png, '--out', small])
+    png = small
+  }
   generation += 1
 
   return { kind: 'image', path: png, source: real, ...(await pngSize($, png)), title: name, generation }
@@ -205,14 +214,53 @@ const fileAt = (media: Shown, frame: number, site?: string) => {
 // The compared side's frame at the moment the shown side is at.
 const compareFrame = (shown: Shown, frame: number) => sameMoment(shown.frames, shown.compare?.frames, frame)
 
+// Pictures go to the terminal as PNG bytes, not file paths: a background
+// session's terminal cannot open files on this machine, bytes always reach it.
+const bytes = new Map<string, Promise<string>>()
+const KEEP = 64
+
+type Source = { png: string } | { file: string; format: 'png' }
+
+// Bytes when the file reads; its path as a last resort.
+export function pngSource($: EngineInterface, file: string): Promise<Source> {
+  return pngBytes($, file).catch(() => ({ file, format: 'png' as const }))
+}
+
+function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
+  let hit = bytes.get(file)
+  if (!hit) {
+    hit = $.fs.read(file, { as: 'bytes' }).then(r => (r as { base64: string }).base64)
+    bytes.set(file, hit)
+    hit.catch(() => bytes.delete(file))
+    while (bytes.size > KEEP) bytes.delete(bytes.keys().next().value!)
+  }
+
+  return hit.then(png => ({ png }))
+}
+
+// Reads the next few frames ahead so playback never waits on a read.
+function prefetch($: EngineInterface, media: Shown, frame: number) {
+  if (!media.frames) return
+  for (let i = 1; i <= 4; i++) {
+    if (frame + i < media.frames.count) void pngBytes($, plainAt(media, frame + i)).catch(() => undefined)
+  }
+}
+
+async function blit($: EngineInterface, site: string, key: string, media: Shown, file: string, frame: number) {
+  prefetch($, media, frame)
+  const source = await pngSource($, file)
+  await $.ui.blit({ requestId: site, key, source })
+}
+
 function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   const one = player(site)
   if (one.isSplit && shown?.compare) {
-    void $.ui.blit({ requestId: site, key: 'view-a', source: { file: fileAt(shown.compare, compareFrame(shown, one.frame)), format: 'png' } })
-    void $.ui.blit({ requestId: site, key: 'view-b', source: { file: fileAt(shown, one.frame), format: 'png' } })
+    const at = compareFrame(shown, one.frame)
+    void blit($, site, 'view-a', shown.compare, fileAt(shown.compare, at), at).catch(() => undefined)
+    void blit($, site, 'view-b', shown, fileAt(shown, one.frame), one.frame).catch(() => undefined)
     return
   }
-  void $.ui.blit({ requestId: site, key: 'view', source: { file: fileAt(media, one.frame, site), format: 'png' } })
+  void blit($, site, 'view', media, fileAt(media, one.frame, site), one.frame).catch(() => undefined)
 }
 
 // The latest check up to a moment whose result differs between the sides.
@@ -292,7 +340,7 @@ type Ui = any
 type Box = { columns: number; rows: number }
 
 // The picture, with whatever catches a click on it laid over it.
-function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, box: Box) {
+function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, box: Box, src: Source) {
   const { Box, Text, Image, Button } = ui
   const one = player(site)
   const frames = media.frames
@@ -305,7 +353,7 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
     <Box position="relative" width={box.columns} height={box.rows}>
       <Image
         key="view"
-        source={{ file: fileAt(media, one.frame, site), format: 'png', generation: media.generation }}
+        source={src}
         columns={box.columns}
         rows={box.rows}
         alt={`[${media.kind ?? 'image'}: ${shown.title} — this terminal cannot draw images]`}
@@ -608,7 +656,7 @@ function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media
 
 // The player: concept A (picture, scrub row, controls) everywhere; concept B
 // (A plus the QA report at its side) when there is a report and room for it.
-function Viewer(
+async function Viewer(
   $: EngineInterface,
   e: Parameters<EngineInterface['ui']['resolve']>[0],
   shown: Shown,
@@ -647,6 +695,7 @@ function Viewer(
   }
 
   // The single view with the QA sidebar is the default; side by side is a click away.
+  const src = await pngSource($, fileAt(media, one.frame, site))
   if (one.isSplit && shown.compare && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
 
   const actions = Actions(ui, $, media, source, isNarrow)
@@ -675,7 +724,7 @@ function Viewer(
 
   const stage = (
     <Box flexDirection="column" width={box.columns}>
-      {Picture(ui, $, site, shown, media, box)}
+      {Picture(ui, $, site, shown, media, box, src)}
       {frames && Scrub(ui, $, site, media, box.columns, shown)}
       <Box flexDirection="row" justifyContent="space-between" width={box.columns}>
         {frames ? (
@@ -730,7 +779,7 @@ function Viewer(
 
 // Both sides at once: names and scores over each, the change at this moment
 // spelled out under them, one scrub row, and the list of changes.
-function SplitView(
+async function SplitView(
   ui: Ui,
   $: EngineInterface,
   site: string,
@@ -754,11 +803,15 @@ function SplitView(
     const passed = all.filter(c => c.ok).length
     return all.length ? <Text bold color={passed === all.length ? 'success' : 'error'}> {passed}/{all.length}</Text> : null
   }
-  const side = (s: Shown, key: string, file: string, fallback: string) => (
+  const [srcA, srcB] = await Promise.all([
+    pngSource($, fileAt(before, compareFrame(shown, one.frame))),
+    pngSource($, fileAt(shown, one.frame)),
+  ])
+  const side = (s: Shown, key: string, src: Source, fallback: string) => (
     <Box flexDirection="column" width={box.columns}>
       <Text bold>{s.label ?? fallback}{score(s)}</Text>
       {Image ? (
-        <Image key={key} source={{ file, format: 'png', generation: s.generation }} columns={box.columns} rows={box.rows} alt={`[${s.label ?? fallback}]`} />
+        <Image key={key} source={src} columns={box.columns} rows={box.rows} alt={`[${s.label ?? fallback}]`} />
       ) : (
         <Text dimColor>This surface cannot draw images.</Text>
       )}
@@ -777,8 +830,8 @@ function SplitView(
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
       <Box flexDirection="row" gap={2} marginTop={1}>
-        {side(before, 'view-a', fileAt(before, compareFrame(shown, one.frame)), 'Before')}
-        {side(shown, 'view-b', fileAt(shown, one.frame), 'After')}
+        {side(before, 'view-a', srcA, 'Before')}
+        {side(shown, 'view-b', srcB, 'After')}
       </Box>
       <Box width={width}>
         {change ? (
