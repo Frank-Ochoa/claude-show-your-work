@@ -644,14 +644,23 @@ export function qaTotals(summary: Summary[] = [], checks: Check[] = []) {
   return { passed: checks.filter(c => c.ok).length, total: checks.length }
 }
 
-// How many key changes fit, given the sidebar's height and what else it holds.
+const PILL = '#30323b'
+const INNER = SIDE - 4 /* padding */ - 4 /* card border + padding */
+
+// Rows the sidebar spends on everything but the change rows.
 export function changesThatFit(height: number, summaryLines: number, hasPr: boolean, hasCompare: boolean) {
-  const fixed = 2 /* padding */ + 1 /* WHAT CHANGED */ + 2 /* QA head + gap */ + summaryLines + (hasPr ? 2 : 0) + (hasCompare ? 4 : 0)
+  const qa = summaryLines >= 0 ? 1 /* divider */ + 1 /* label */ + 2 /* card border */ + 1 /* total */ + summaryLines : 0
+  const footer = hasPr || hasCompare ? 1 /* divider */ + (hasPr ? 1 : 0) + (hasCompare ? 2 : 0) : 0
+  const fixed = 2 /* padding */ + 1 /* label */ + 2 /* card border */ + qa + footer
   return Math.max(1, height - fixed)
 }
 
-// The sidebar, exactly as tall as the player: what changed (each one jumps to
-// its moment), then the QA in three lines. More changes than fit page through.
+// A title cut to fit one row, so a long one never pushes the rows down.
+export const cut = (text: string, width: number) => (text.length <= width ? text : text.slice(0, Math.max(1, width - 1)) + '…')
+
+// The sidebar, exactly as tall as the player, in cards: what changed (each one
+// jumps to its moment; the one playing now is lit), the QA in three lines, then
+// the PR and the Original/Updated switch.
 function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, height: number) {
   const { Box, Text, Button } = ui
   const one = player(site)
@@ -660,16 +669,26 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const summary = (shown.summary ?? []).slice(0, 3)
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
-  const room = changesThatFit(height, summary.length, !!prLink, !!shown.compare)
+  const hasFooter = !!prLink || !!shown.compare
+  const room = changesThatFit(height, total > 0 ? summary.length : -1, !!prLink, !!shown.compare)
   const pages = Math.max(1, Math.ceil(changes.length / room))
   const page = Math.min(one.changesPage ?? 0, pages - 1)
   const shownChanges = changes.slice(page * room, page * room + room)
+  const now = media.frames ? one.frame / media.frames.fps : -1
+  const live = changes.reduce((hit, c, i) => (c.at !== undefined && c.at <= now ? i : hit), -1)
+  const rule = <Text color="subtle">{'─'.repeat(SIDE - 4)}</Text>
+  const label = (text: string, right?: Ui) => (
+    <Box flexDirection="row" justifyContent="space-between">
+      <Text dimColor bold>{text}</Text>
+      {right}
+    </Box>
+  )
 
   return (
     <Box flexDirection="column" width={SIDE} height={height} overflow="hidden" backgroundColor={SIDEBAR} paddingX={2} paddingY={1}>
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text dimColor>WHAT CHANGED</Text>
-        {pages > 1 && (
+      {label(
+        `WHAT CHANGED · ${changes.length}`,
+        pages > 1 ? (
           <Button
             key="changes-more"
             plain
@@ -680,40 +699,60 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
               redraw($, site)
             }}
           />
-        )}
+        ) : undefined,
+      )}
+      <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+        {shownChanges.map((c, i) => {
+          const n = page * room + i
+          const isLive = n === live
+          const time = c.at !== undefined ? ` ${clock(c.at)} ` : ''
+          return (
+            <Box key={`change-${n}`} flexDirection="row" justifyContent="space-between" height={1}>
+              <Box flexDirection="row" gap={1}>
+                <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
+                <Button
+                  key={`change-${n}`}
+                  plain
+                  label={cut(c.title, INNER - 5 - time.length)}
+                  onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
+                />
+              </Box>
+              {time && (
+                <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
+                  {time}
+                </Text>
+              )}
+            </Box>
+          )
+        })}
       </Box>
-      {shownChanges.map((c, i) => (
-        <Box key={`change-${page * room + i}`} flexDirection="row" gap={1}>
-          <Text dimColor>{`${page * room + i + 1}.`.padStart(3)}</Text>
-          <Box flexGrow={1} flexShrink={1}>
-            <Button
-              key={`change-${page * room + i}`}
-              plain
-              label={c.title}
-              onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
-            />
-          </Box>
-          {c.at !== undefined && <Text dimColor>{clock(c.at)}</Text>}
-        </Box>
-      ))}
       {total > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold color={allPass ? 'success' : 'error'}>
-            {allPass ? '✓' : '✗'} QA · {passed} of {total} checks passed
-          </Text>
-          {summary.map(s => (
-            <Text key={`sum-${s.label}`} wrap="truncate-end">
-              <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text> {s.label}
-              {s.total !== undefined && <Text dimColor> {s.passed ?? (s.ok ? s.total : 0)}/{s.total}</Text>}
+        <Box flexDirection="column">
+          {rule}
+          {label('QA', <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>)}
+          <Box flexDirection="column" borderStyle="round" borderColor={allPass ? 'success' : 'error'} borderDimColor paddingX={1}>
+            <Text bold color={allPass ? 'success' : 'error'}>
+              {allPass ? '✓ All checks passed' : `✗ ${total - passed} of ${total} checks failed`}
             </Text>
-          ))}
+            {summary.map(s => (
+              <Box key={`sum-${s.label}`} flexDirection="row" justifyContent="space-between" height={1}>
+                <Text>
+                  <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text> {cut(s.label, INNER - 8)}
+                </Text>
+                {s.total !== undefined && <Text dimColor>{s.passed ?? (s.ok ? s.total : 0)}/{s.total}</Text>}
+              </Box>
+            ))}
+          </Box>
         </Box>
       )}
-      {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
-      {shown.compare && <Box marginTop={1}>{Tabs(ui, $, site, shown)}</Box>}
-      {shown.compare && media.frames && shown.pair && (
-        <Box marginTop={1}>
-          <Button key="split" variant="primary" label="⧉ Side by side" onPress={() => split($, site, shown, true)} />
+      {hasFooter && (
+        <Box flexDirection="column">
+          {rule}
+          {prLink && <Box flexDirection="row" gap={1}><Text dimColor>PR</Text>{prLink}</Box>}
+          {shown.compare && Tabs(ui, $, site, shown)}
+          {shown.compare && media.frames && shown.pair && (
+            <Button key="split" variant="primary" label="⧉ Side by side" onPress={() => split($, site, shown, true)} />
+          )}
         </Box>
       )}
     </Box>
@@ -880,7 +919,10 @@ async function Viewer(
           {!isWide && Tabs(ui, $, site, shown)}
           {!isWide && shown.compare && frames && shown.pair && <Button key="split" plain label="⧉ Side by side" onPress={() => split($, site, shown, true)} />}
         </Box>
-        {actions}
+        <Box flexDirection="row" columnGap={2}>
+          {opener}
+          {actions}
+        </Box>
       </Box>
     </Box>
   )
@@ -896,10 +938,7 @@ async function Viewer(
             </Text>
           )}
         </Box>
-        <Box flexDirection="row" gap={2} flexShrink={0}>
-          <Text dimColor>{frames ? `${media.width}×${media.height} · ${clock(frames.duration)}` : `${media.width}×${media.height}`}</Text>
-          {opener}
-        </Box>
+        <Text dimColor>{frames ? `${media.width}×${media.height} · ${clock(frames.duration)}` : `${media.width}×${media.height}`}</Text>
       </Box>
       {!isWide && (shown.change || prLink) && (
         <Box flexDirection="row" gap={2}>
