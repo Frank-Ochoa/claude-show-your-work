@@ -1288,7 +1288,7 @@ export const register: Register = on => {
     }
   })
 
-  on('tool.call', { tool: /^mcp__show-your-work__show_(image|video)$/ }, async ($, e) => {
+  on('tool.call', { tool: /^mcp__(show-your-work|image-view)__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
