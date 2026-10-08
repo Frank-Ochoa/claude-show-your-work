@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { anchors, barChunks, changeAt, mapTime, qaTotals, warpSegments, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, warpSegments, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -140,4 +140,16 @@ test('both runs line up on the steps they share', () => {
 test('the QA line totals the summary', () => {
   expect(qaTotals([{ label: 'a', ok: true, passed: 4, total: 4 }, { label: 'b', ok: false, passed: 1, total: 3 }])).toEqual({ passed: 5, total: 7 })
   expect(qaTotals([], [{ name: 'x', ok: true }, { name: 'y', ok: false }])).toEqual({ passed: 1, total: 2 })
+})
+
+test('sidebar text wraps whole words and never loses any', () => {
+  const lines = wrapWords('Stats moved inside the cards on every slide', 12)
+  expect(lines.every(l => l.length <= 12)).toBe(true)
+  expect(lines.join(' ')).toBe('Stats moved inside the cards on every slide')
+  expect(wrapWords('short', 12)).toEqual(['short'])
+})
+
+test('changes page by rows and an item never splits', () => {
+  const pages = pagesOf([{ item: 'a', rows: 2 }, { item: 'b', rows: 2 }, { item: 'c', rows: 1 }], 3)
+  expect(pages).toEqual([['a'], ['b', 'c']])
 })

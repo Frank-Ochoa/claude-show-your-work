@@ -651,38 +651,69 @@ export function qaTotals(summary: Summary[] = [], checks: Check[] = []) {
 }
 
 const PILL = '#30323b'
-const INNER = SIDE - 4 /* padding */ - 4 /* card border + padding */
+const INNER = SIDE - 4 /* sidebar padding */
+const TITLE = INNER - 4 /* "12. " */ - 1 - 6 /* " 0:07 " */
+const LABEL = INNER - 4 /* card border + padding */ - 2 /* "✓ " */ - 5 /* " 11/11" */
 
 // Rows the sidebar spends on everything but the change rows.
-export function changesThatFit(height: number, summaryLines: number, hasPr: boolean, hasCompare: boolean) {
-  const qa = summaryLines >= 0 ? 1 /* divider */ + 1 /* label */ + 2 /* card border */ + 1 /* total */ + summaryLines : 0
-  const footer = hasPr ? 2 /* divider + PR */ : 0
-  const tabs = hasCompare ? 2 /* tabs + divider */ : 0
-  const fixed = 2 /* padding */ + tabs + 1 /* label */ + 2 /* card border */ + qa + footer
+export function changesThatFit(height: number, summaryRows: number, hasPr: boolean, hasCompare: boolean) {
+  const qa = summaryRows >= 0 ? 1 /* gap */ + 1 /* label */ + 2 /* card border */ + 1 /* verdict */ + summaryRows : 0
+  const fixed = 2 /* padding */ + (hasCompare ? 2 : 0) /* switch + gap */ + 1 /* label */ + qa + (hasPr ? 2 : 0)
   return Math.max(1, height - fixed)
 }
 
-// A title cut to fit one row, so a long one never pushes the rows down.
-export const cut = (text: string, width: number) => (text.length <= width ? text : text.slice(0, Math.max(1, width - 1)) + '…')
+// Words wrapped to lines of at most width, so the whole text is always shown.
+export function wrapWords(text: string, width: number): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    for (let w = word; w; ) {
+      const piece = w.length > width ? w.slice(0, width) : w
+      w = w.slice(piece.length)
+      if (!line) line = piece
+      else if (line.length + 1 + piece.length <= width) line += ' ' + piece
+      else {
+        lines.push(line)
+        line = piece
+      }
+    }
+  }
+  return lines.length || line ? [...lines, line].filter(Boolean) : ['']
+}
+
+// Splits wrapped items into pages that each fit rows; an item never splits.
+export function pagesOf<T>(items: { item: T; rows: number }[], rows: number): T[][] {
+  const pages: T[][] = [[]]
+  let used = 0
+  for (const { item, rows: need } of items) {
+    if (used + need > rows && pages.at(-1)!.length) {
+      pages.push([])
+      used = 0
+    }
+    pages.at(-1)!.push(item)
+    used += need
+  }
+  return pages
+}
 
 // The sidebar, exactly as tall as the player: the Original / Updated / Both
-// switch fixed on top, then cards for what changed (each one jumps to its
-// moment; the one playing now is lit) and the QA in three lines, then the PR.
+// switch on top, what changed (each one jumps to its moment; the one playing
+// now is lit), the QA in a card, then the PR. Text wraps; nothing is cut.
 function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, height: number) {
   const { Box, Text, Button } = ui
   const one = player(site)
   const media = sideOf(shown, site)
   const changes: KeyChange[] = shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : []
-  const summary = (shown.summary ?? []).slice(0, 3)
+  const summary = (shown.summary ?? []).slice(0, 3).map(s => ({ ...s, lines: wrapWords(s.label, LABEL) }))
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
-  const room = changesThatFit(height, total > 0 ? summary.length : -1, !!prLink, !!shown.compare)
-  const pages = Math.max(1, Math.ceil(changes.length / room))
-  const page = Math.min(one.changesPage ?? 0, pages - 1)
-  const shownChanges = changes.slice(page * room, page * room + room)
+  const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
+  const room = changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink, !!shown.compare)
+  const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
+  const pages = pagesOf(wrapped.map(w => ({ item: w, rows: w.lines.length })), room)
+  const page = Math.min(one.changesPage ?? 0, pages.length - 1)
   const now = media.frames ? one.frame / media.frames.fps : -1
   const live = changes.reduce((hit, c, i) => (c.at !== undefined && c.at <= now ? i : hit), -1)
-  const rule = <Text color="subtle">{'─'.repeat(SIDE - 4)}</Text>
   const label = (text: string, right?: Ui) => (
     <Box flexDirection="row" justifyContent="space-between">
       <Text dimColor bold>{text}</Text>
@@ -692,77 +723,61 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
 
   return (
     <Box flexDirection="column" width={SIDE} height={height} overflow="hidden" backgroundColor={SIDEBAR} paddingX={2} paddingY={1}>
-      {shown.compare && (
-        <Box flexDirection="column">
-          {Tabs(ui, $, site, shown)}
-          {rule}
-        </Box>
-      )}
+      {shown.compare && <Box marginBottom={1}>{Tabs(ui, $, site, shown)}</Box>}
       {label(
         `WHAT CHANGED · ${changes.length}`,
-        pages > 1 ? (
+        pages.length > 1 ? (
           <Button
             key="changes-more"
             plain
             dimColor
-            label={`${page + 1}/${pages} ↓`}
+            label={`${page + 1}/${pages.length} ↓`}
             onPress={() => {
-              one.changesPage = (page + 1) % pages
+              one.changesPage = (page + 1) % pages.length
               redraw($, site)
             }}
           />
         ) : undefined,
       )}
-      <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
-        {shownChanges.map((c, i) => {
-          const n = page * room + i
-          const isLive = n === live
-          const time = c.at !== undefined ? ` ${clock(c.at)} ` : ''
-          return (
-            <Box key={`change-${n}`} flexDirection="row" justifyContent="space-between" height={1}>
-              <Box flexDirection="row" gap={1}>
-                <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
-                <Button
-                  key={`change-${n}`}
-                  plain
-                  label={cut(c.title, INNER - 5 - time.length)}
-                  onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
-                />
-              </Box>
-              {time && (
-                <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
-                  {time}
-                </Text>
-              )}
+      {(pages[page] ?? []).map(({ c, n, lines }) => {
+        const isLive = n === live
+        const jump = () => c.at !== undefined && seek($, site, media, c.at, shown)
+        return (
+          <Box key={`change-${n}`} flexDirection="row" gap={1}>
+            <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
+            <Box flexDirection="column" width={TITLE}>
+              {lines.map((line, i) => (
+                <Button key={`change-${n}-${i}`} plain label={line} onPress={jump} />
+              ))}
             </Box>
-          )
-        })}
-      </Box>
+            {c.at !== undefined && (
+              <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
+                {` ${clock(c.at)} `}
+              </Text>
+            )}
+          </Box>
+        )
+      })}
       {total > 0 && (
-        <Box flexDirection="column">
-          {rule}
+        <Box flexDirection="column" marginTop={1}>
           {label('QA', <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>)}
           <Box flexDirection="column" borderStyle="round" borderColor={allPass ? 'success' : 'error'} borderDimColor paddingX={1}>
             <Text bold color={allPass ? 'success' : 'error'}>
               {allPass ? '✓ All checks passed' : `✗ ${total - passed} of ${total} checks failed`}
             </Text>
             {summary.map(s => (
-              <Box key={`sum-${s.label}`} flexDirection="row" justifyContent="space-between" height={1}>
-                <Text>
-                  <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text> {cut(s.label, INNER - 8)}
-                </Text>
-                {s.total !== undefined && <Text dimColor>{s.passed ?? (s.ok ? s.total : 0)}/{s.total}</Text>}
+              <Box key={`sum-${s.label}`} flexDirection="row" gap={1}>
+                <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text>
+                <Box flexDirection="column" width={LABEL}>
+                  {s.lines.map((line, i) => <Text key={`sum-${s.label}-${i}`}>{line}</Text>)}
+                </Box>
+                {s.total !== undefined && <Text dimColor>{`${s.passed ?? (s.ok ? s.total : 0)}/${s.total}`.padStart(5)}</Text>}
               </Box>
             ))}
           </Box>
         </Box>
       )}
-      {prLink && (
-        <Box flexDirection="column">
-          {rule}
-          <Box flexDirection="row" gap={1}><Text dimColor>PR</Text>{prLink}</Box>
-        </Box>
-      )}
+      {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
     </Box>
   )
 }
