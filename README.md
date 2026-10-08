@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/thumb.jpg" alt="claude-show-your-work: Claude shows its work. Original and updated QA runs playing side by side in Ghostty" width="100%">
+  <img src="docs/thumb.jpg" alt="Claude shows its work: inline images, video previews and QA review, right in Claude Code" width="100%">
 </p>
 
 <h1 align="center">claude-show-your-work</h1>
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/hero.gif" alt="Claude fixes a pricing page, then plays its QA run inline in the terminal and compares Original and Updated side by side" width="100%">
+  <img src="docs/hero.gif" alt="A design session in Claude Code: four concepts land in the chat, feedback, v2 with a before/after switch, then desktop and mobile together" width="100%">
 </p>
 
 <p align="center">
@@ -139,4 +139,4 @@ Edit `hooks/register.tsx`, then `/reload-plugins`. Check with `claude plugin val
 
 ---
 
-<sub>Background photography from <a href="https://unsplash.com">Unsplash</a>, used under the Unsplash License.</sub>
+<sub>Demo photography from <a href="https://unsplash.com">Unsplash</a>, used under the Unsplash License. Header background: credit to its artist to be added before public release.</sub>
