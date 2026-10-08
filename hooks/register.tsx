@@ -1230,9 +1230,11 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'show_image',
       description:
-        "Show a local image (PNG, JPEG, WebP, GIF, TIFF) inline in the user's terminal, in a player window with Open, Reveal and Copy. " +
-        "Use it unasked whenever you've made visual work the user should see: a rendered slide or page, a before/after, a chart, a mockup. " +
-        'For work that changes something, pass change, pr, checks and compare (the before file): the window adds a QA report and Before/After tabs. ' +
+        "Show a local image (PNG, JPEG, WebP, GIF, TIFF) inline in the user's terminal. " +
+        "Use it unasked whenever you've made visual work the user should see: a rendered page or slide, a chart, a mockup. " +
+        'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
+        'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
+        'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1240,10 +1242,12 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'show_video',
       description:
-        "Play a local video (MP4, MOV, WebM, GIF) inline in the user's terminal in a player: it starts by itself, with Play/Pause, a clickable progress bar and seek. " +
+        "Play a local video (MP4, MOV, WebM, GIF) inline in the user's terminal in a player that starts by itself. " +
         'Use it to show recordings you made: a Playwright run clicking through and checking a page, a rendered animation or film cut. ' +
-        'For work that changes something, pass change, pr, checks (with at = seconds) and compare (the before recording, with compare_checks): ' +
-        'the window adds a QA report, what was fixed or broke, and synced Before/After tabs. ' +
+        'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, each with `at` = the second it shows in the clip), ' +
+        '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
+        'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
+        '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
