@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Check, Frames, KeyChange, Note, Overlay, Shown, Summary } from '../types'
+import type { Check, Frames, KeyChange, Overlay, Shown, Summary } from '../types'
 
 const PANE = 'image-view'
 const TOOLS = ['mcp__image-view__show_image', 'mcp__image-view__show_video']
@@ -40,10 +40,6 @@ type Player = {
   changesPage?: number
   // the picture's size in cells as last drawn, for repaints
   box?: { columns: number; rows: number }
-  // commenting: picking a spot, then writing the note for it
-  mode?: 'place' | 'write'
-  spot?: { x: number; y: number }
-  notes?: Note[]
 }
 const players = new Map<string, Player>()
 // Calls made since this load: only these autoplay, not every window a reload redraws.
@@ -297,16 +293,6 @@ const sideOf = (shown: Shown, site: string): Shown =>
 const plainAt = (media: Shown, frame: number) =>
   media.frames ? frameFile(media.frames, Math.min(frame, media.frames.count - 1)) : media.path
 
-// Frames with pins drawn on them, by site and frame.
-const pinned = new Map<string, string>()
-const pinKey = (site: string, media: Shown, frame: number) => `${site}:${media.generation}:${media.frames ? frame : 0}`
-
-// What a frame shows: its pinned version while paused, else the plain frame.
-const fileAt = (media: Shown, frame: number, site?: string) => {
-  const pins = site && !player(site).timer ? pinned.get(pinKey(site, media, frame)) : undefined
-
-  return pins ?? plainAt(media, frame)
-}
 
 // The compared side's frame at the moment the shown side is at.
 const compareFrame = (shown: Shown, frame: number) => {
@@ -415,11 +401,11 @@ function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   }
   if (one.isSplit && shown?.compare) {
     const at = compareFrame(shown, one.frame)
-    void blit($, site, 'view-a', shown.compare, fileAt(shown.compare, at), at).catch(() => undefined)
-    void blit($, site, 'view-b', shown, fileAt(shown, one.frame), one.frame).catch(() => undefined)
+    void blit($, site, 'view-a', shown.compare, plainAt(shown.compare, at), at).catch(() => undefined)
+    void blit($, site, 'view-b', shown, plainAt(shown, one.frame), one.frame).catch(() => undefined)
     return
   }
-  void blit($, site, 'view', media, fileAt(media, one.frame, site), one.frame).catch(() => undefined)
+  void blit($, site, 'view', media, plainAt(media, one.frame), one.frame).catch(() => undefined)
 }
 
 // A side's checks in words: "4 checks fail" or "all 11 checks pass".
@@ -554,7 +540,6 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   const total = clock(frames.duration)
   const segments = Math.max(6, width - (word.length + 4) - elapsed.length - total.length - 4)
   const playhead = Math.min(segments - 1, Math.round((one.frame / Math.max(1, frames.count - 1)) * (segments - 1)))
-  const noted = new Set((one.notes ?? []).map(n => Math.round((n.at / Math.max(0.1, frames.duration)) * (segments - 1))))
   one.segments = segments
 
   // Playing: the bar is one cheap line of text. Paused: every cell is a button
@@ -572,7 +557,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   }
 
   // Paused: the bar is ~20 wide buttons, each a stretch you can jump to.
-  const chunks = barChunks(segments, playhead, noted)
+  const chunks = barChunks(segments, playhead)
 
   return (
     <Box flexDirection="row" flexWrap="nowrap" width={width}>
@@ -593,14 +578,14 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
 }
 
 // Splits the bar's cells into ~20 stretches: played cells '━', the playhead
-// '●', notes '◆', the rest '─'; a stretch is dim once it lies ahead.
-export function barChunks(segments: number, playhead: number, noted: Set<number> = new Set(), count = 20) {
+// '●', the rest '─'; a stretch is dim once it lies ahead.
+export function barChunks(segments: number, playhead: number, count = 20) {
   const size = Math.max(1, Math.ceil(segments / count))
   const chunks: { start: number; label: string; isAhead: boolean }[] = []
   for (let start = 0; start < segments; start += size) {
     let label = ''
     for (let i = start; i < Math.min(segments, start + size); i++) {
-      label += i === playhead ? '●' : noted.has(i) ? '◆' : i < playhead ? '━' : '─'
+      label += i === playhead ? '●' : i < playhead ? '━' : '─'
     }
     chunks.push({ start, label, isAhead: start > playhead })
   }
@@ -698,12 +683,18 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
         )}
       </Box>
       {shownChanges.map((c, i) => (
-        <Button
-          key={`change-${page * room + i}`}
-          plain
-          label={`${page * room + i + 1}  ${c.title}${c.at !== undefined ? `  ${clock(c.at)}` : ''}`}
-          onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
-        />
+        <Box key={`change-${page * room + i}`} flexDirection="row" gap={1}>
+          <Text dimColor>{`${page * room + i + 1}.`.padStart(3)}</Text>
+          <Box flexGrow={1} flexShrink={1}>
+            <Button
+              key={`change-${page * room + i}`}
+              plain
+              label={c.title}
+              onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
+            />
+          </Box>
+          {c.at !== undefined && <Text dimColor>{clock(c.at)}</Text>}
+        </Box>
       ))}
       {total > 0 && (
         <Box flexDirection="column" marginTop={1}>
@@ -748,14 +739,7 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
 
   return (
     <Box flexDirection="row" gap={2}>
-      <Button
-        key="open"
-        plain
-        dimColor
-        label={media.frames ? 'Open full quality' : 'Open full size'}
-        onPress={() => void $.process.run(['open', source]).then(r => done(r, `Opened ${name}`))}
-      />
-      {isScratch(source) ? (
+      {!source.startsWith(`${home}/Downloads/`) ? (
         <Button key="keep" plain dimColor label="Save to Downloads" onPress={() => void keep()} />
       ) : (
         <Button key="reveal" plain dimColor label="Show in Finder" onPress={() => void $.process.run(['open', '-R', source]).then(r => done(r, 'Shown in Finder'))} />
@@ -780,136 +764,6 @@ export function urlAt(shown: Shown, seconds: number): string | undefined {
   const hit = (shown.checks ?? []).filter(c => c.url && (c.at ?? 0) <= seconds).at(-1)
 
   return hit?.url ?? shown.url
-}
-
-// Draws pin n at (x, y) on the frame shown now, over any pins already there.
-async function addPin($: EngineInterface, site: string, media: Shown, x: number, y: number, text: string) {
-  const one = player(site)
-  const notes = (one.notes ??= [])
-  const n = notes.length + 1
-  const frame = media.frames ? one.frame : 0
-  const base = pinned.get(pinKey(site, media, frame)) ?? plainAt(media, frame)
-  const size = Math.max(28, Math.round(media.height * 0.075))
-  const out = `${TMP}/notes/${site.replace(/[^\w-]/g, '')}-${frame}-${n}.png`
-  await $.process.run(['mkdir', '-p', `${TMP}/notes`])
-  const made = await $.process.run([
-    ffmpeg, '-v', 'error', '-y', '-i', base, '-i', `${$.plugin.root}/assets/pins/${Math.min(n, 20)}.png`,
-    '-filter_complex', `[1]scale=${size}:${size}[pin];[0][pin]overlay=${Math.round(x * media.width - size / 2)}:${Math.round(y * media.height - size / 2)}`,
-    out,
-  ])
-  if (made.exitCode !== 0) return $.ui.toast(`Could not draw the pin: ${made.stderr.trim().slice(0, 120)}`)
-  pinned.set(pinKey(site, media, frame), out)
-  notes.push({ n, at: media.frames ? frame / media.frames.fps : 0, frame, x, y, text, file: out })
-  one.mode = undefined
-  one.spot = undefined
-  draw($, site, media)
-  redraw($, site)
-}
-
-// The notes as a prompt for the agent: where, when, what, and the pinned frames.
-export function notesPrompt(shown: Shown, notes: Note[], isVideo: boolean): string {
-  const where = (n: Note) => `${Math.round(n.x * 100)}% across, ${Math.round(n.y * 100)}% down`
-  const lines = notes.map(n => `${n.n}. ${isVideo ? `at ${clock(n.at)}, ` : ''}${where(n)}: ${n.text} (pinned frame: ${n.file})`)
-
-  return [`Feedback on "${shown.title}" (${shown.source ?? shown.path}):`, ...lines].join('\n')
-}
-
-const GRID_COLS = 16
-const GRID_ROWS = 6
-
-// Commenting: a small map of the picture to pick the spot, then the note.
-function Commenting(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, width: number) {
-  const { Box, Text, Button, Input } = ui
-  const one = player(site)
-  if (one.mode === 'place') {
-    return (
-      <Box flexDirection="column" width={width} marginTop={1}>
-        <Box flexDirection="row" gap={2}>
-          <Text bold>Where? Click the spot on this map of the picture</Text>
-          <Button key="cancel" plain dimColor label="Cancel" onPress={() => { one.mode = undefined; redraw($, site) }} />
-        </Box>
-        {Array.from({ length: GRID_ROWS }, (_, r) => (
-          <Box key={`gr-${r}`} flexDirection="row">
-            {Array.from({ length: GRID_COLS }, (_, c) => (
-              <Button
-                key={`g-${r}-${c}`}
-                plain
-                dimColor
-                label=" ·"
-                onPress={() => {
-                  one.spot = { x: (c + 0.5) / GRID_COLS, y: (r + 0.5) / GRID_ROWS }
-                  one.mode = 'write'
-                  redraw($, site)
-                }}
-              />
-            ))}
-          </Box>
-        ))}
-      </Box>
-    )
-  }
-  if (one.mode === 'write' && one.spot && Input) {
-    const n = (one.notes?.length ?? 0) + 1
-    const spot = one.spot
-
-    return (
-      <Box flexDirection="column" width={width} marginTop={1}>
-        <Input
-          key="note"
-          autoFocus
-          label={`Note ${n}`}
-          placeholder="What should change here?"
-          submitLabel="Pin it"
-          onSubmit={(text: string) => text.trim() && void addPin($, site, media, spot.x, spot.y, text.trim())}
-        />
-      </Box>
-    )
-  }
-
-  return null
-}
-
-// The pinned notes: each jumps to its moment; send them all to the agent.
-function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, width: number) {
-  const { Box, Text, Button } = ui
-  const notes = player(site).notes ?? []
-  if (!notes.length) return null
-
-  return (
-    <Box flexDirection="column" width={width} marginTop={1}>
-      {notes.map(n => (
-        <Button
-          key={`note-${n.n}`}
-          plain
-          label={`${n.n}  ${media.frames ? clock(n.at) + '  ' : ''}${n.text}`}
-          onPress={() => media.frames && seek($, site, media, n.at)}
-        />
-      ))}
-      <Box flexDirection="row" gap={2} marginTop={1}>
-        <Button
-          key="send"
-          variant="primary"
-          label={`Send ${notes.length} note${notes.length > 1 ? 's' : ''} to Claude`}
-          onPress={() =>
-            void $.prompt.submit({ text: notesPrompt(shown, notes, !!media.frames) }).then(() => $.ui.toast('Sent to Claude'))
-          }
-        />
-        <Button
-          key="clear"
-          plain
-          dimColor
-          label="Clear notes"
-          onPress={() => {
-            player(site).notes = []
-            for (const key of [...pinned.keys()]) if (key.startsWith(`${site}:`)) pinned.delete(key)
-            draw($, site, media)
-            redraw($, site)
-          }}
-        />
-        <Text dimColor>numbers match the pins on the picture</Text>
-      </Box>
-    </Box>
-  )
 }
 
 // Shown while pictures are drawn as cells: why, and the way back to full quality.
@@ -995,31 +849,23 @@ async function Viewer(
     return Warning(ui, $, site, shown, columns - 8)
   }
   one.box = { columns: box.columns, rows: box.rows }
-  const pic = await picFor($, fileAt(media, one.frame, site), box)
+  const pic = await picFor($, plainAt(media, one.frame), box)
   probe($, site, 'view', pic)
   if (one.isSplit && shown.pair && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
 
   const actions = Actions(ui, $, media, source, isNarrow)
-  const page = urlAt(media, frames ? one.frame / frames.fps : 0)
-  const pageButton = page ? (
+  // The top corner opens it: the page it shows, else the file itself.
+  const page = urlAt(media, frames ? one.frame / frames.fps : 0) ?? (/\.html?$/i.test(source) ? source : undefined)
+  const opener = (
     <Button
       key="page"
       plain
-      label="↗ Open page"
-      onPress={() => void $.process.run(['open', page]).then(r => $.ui.toast(r.exitCode === 0 ? `Opened ${page.slice(0, 60)}` : 'Could not open the page'))}
-    />
-  ) : null
-  const commentButton = (
-    <Button
-      key="comment"
-      plain
-      label="✎ Comment"
-      onPress={() => {
-        one.timer?.cancel()
-        one.timer = undefined
-        one.mode = 'place'
-        redraw($, site)
-      }}
+      label={page ? '↗ Open page' : '↗ View'}
+      onPress={() =>
+        void $.process.run(['open', page ?? source]).then(r =>
+          $.ui.toast(r.exitCode === 0 ? `Opened ${(page ?? source.split('/').pop()!).slice(0, 60)}` : 'Could not open it'),
+        )
+      }
     />
   )
 
@@ -1027,27 +873,15 @@ async function Viewer(
     <Box flexDirection="column" width={box.columns}>
       {Picture(ui, $, site, shown, media, box, pic)}
       {frames && Scrub(ui, $, site, media, box.columns, shown)}
-      <Box flexDirection="column" width={box.columns}>
-        {frames ? (
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2} width={box.columns}>
-            <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />
-            <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />
-            {!isWide && Tabs(ui, $, site, shown)}
-            {!isWide && shown.compare && <Button key="split" plain label="⧉ Side by side" onPress={() => split($, site, shown, true)} />}
-            {commentButton}
-            {pageButton}
-          </Box>
-        ) : (
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2} width={box.columns}>
-            {!isWide && Tabs(ui, $, site, shown)}
-            {commentButton}
-            {pageButton}
-          </Box>
-        )}
-        <Box flexDirection="row" justifyContent="flex-end" width={box.columns}>{actions}</Box>
+      <Box flexDirection="row" justifyContent="space-between" columnGap={2} flexWrap="wrap" width={box.columns}>
+        <Box flexDirection="row" columnGap={2}>
+          {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
+          {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
+          {!isWide && Tabs(ui, $, site, shown)}
+          {!isWide && shown.compare && frames && shown.pair && <Button key="split" plain label="⧉ Side by side" onPress={() => split($, site, shown, true)} />}
+        </Box>
+        {actions}
       </Box>
-      {Commenting(ui, $, site, shown, media, box.columns)}
-      {NotesList(ui, $, site, shown, media, box.columns)}
     </Box>
   )
 
@@ -1062,7 +896,10 @@ async function Viewer(
             </Text>
           )}
         </Box>
-        <Text dimColor>{frames ? `${media.width}×${media.height} · ${clock(frames.duration)}` : `${media.width}×${media.height}`}</Text>
+        <Box flexDirection="row" gap={2} flexShrink={0}>
+          <Text dimColor>{frames ? `${media.width}×${media.height} · ${clock(frames.duration)}` : `${media.width}×${media.height}`}</Text>
+          {opener}
+        </Box>
       </Box>
       {!isWide && (shown.change || prLink) && (
         <Box flexDirection="row" gap={2}>
@@ -1121,7 +958,6 @@ async function SplitView(
         <Text bold wrap="truncate-end">{shown.title}</Text>
         <Box flexDirection="row" gap={2}>
           {prLink}
-          <Button key="comment" plain label="✎ Comment" onPress={() => { split($, site, shown, false); player(site).mode = 'place'; redraw($, site) }} />
           <Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} />
         </Box>
       </Box>
@@ -1228,7 +1064,7 @@ export const register: Register = on => {
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
     // Frames are ~0.3 MB each: keep only the newest few clips' worth.
     void $.process.run(['sh', '-c', `ls -dt ${TMP}/v* 2>/dev/null | tail -n +7 | xargs rm -rf`])
-    // Converted pictures and pinned frames older than two days go too.
+    // Converted pictures older than two days go too.
     void $.process.run(['sh', '-c', `find ${TMP} -maxdepth 2 -type f -mtime +2 -delete 2>/dev/null; true`])
     await $.command.register({
       name: 'img',

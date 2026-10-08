@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { anchors, barChunks, changeAt, mapTime, qaTotals, warpSegments, checkDiff, resultWords, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { anchors, barChunks, changeAt, mapTime, qaTotals, warpSegments, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -103,14 +103,6 @@ test('open page follows the latest check with a url', () => {
   expect(urlAt(shown, 3)).toBe('http://localhost:3000/#slide-07')
   expect(urlAt(shown, 9)).toBe('http://localhost:3000/#slide-10')
 })
-
-test('notes become a prompt with where, when and the pinned frame', () => {
-  const shown = { path: '/a.png', source: '/w/qa.webm', width: 1, height: 1, title: 'Agent QA', generation: 1 }
-  const text = notesPrompt(shown, [{ n: 1, at: 7.4, frame: 89, x: 0.25, y: 0.5, text: 'Logo too small', file: '/tmp/p.png' }], true)
-  expect(text).toContain('Feedback on "Agent QA" (/w/qa.webm)')
-  expect(text).toContain('1. at 0:07, 25% across, 50% down: Logo too small (pinned frame: /tmp/p.png)')
-})
-
 
 test('the resume command names this session', () => {
   expect(resumeCommand('abc-123')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume abc-123')

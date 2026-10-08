@@ -11,10 +11,6 @@ export type KeyChange = { title: string; detail?: string; at?: number; url?: str
 // many of its checks did.
 export type Summary = { label: string; ok: boolean; passed?: number; total?: number }
 
-// A note the person pinned: where (0..1 across and down), when, and the
-// frame with its numbered pin drawn on.
-export type Note = { n: number; at: number; frame: number; x: number; y: number; text: string; file: string }
-
 // A play button over the centre of a paused video, or none. (A grid of
 // buttons over the whole picture was tried: it erases the picture.)
 export type Overlay = 'center' | 'none'
