@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/thumb.jpg" alt="claude-show-your-work: Claude shows its work. Original and updated QA runs playing side by side in Ghostty" width="100%">
+</p>
+
 <h1 align="center">claude-show-your-work</h1>
 
 <p align="center">
@@ -62,7 +66,7 @@ One row of controls under every picture and video:
 
 ### Half-screen terminal? It adapts
 
-<img align="right" src="docs/narrow.png" alt="In a narrow window the report moves under the player, in two columns" width="42%">
+<img align="right" src="docs/narrow.jpg" alt="In a narrow window the report moves under the player, in two columns" width="42%">
 
 In a narrow window the report moves **under** the player instead of beside it: the Original / Updated / Both switch on top, then what changed and the QA in two columns (one, if it's narrower still). Nothing is cut off; long titles wrap.
 
@@ -132,3 +136,7 @@ Then ask Claude: *"show me the QA, rec-after vs rec-before"*.
 ## Develop
 
 Edit `hooks/register.tsx`, then `/reload-plugins`. Check with `claude plugin validate .` and `claude plugin test .`.
+
+---
+
+<sub>Background photography from <a href="https://unsplash.com">Unsplash</a>, used under the Unsplash License.</sub>
