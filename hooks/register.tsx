@@ -14,7 +14,9 @@ const MAX_FPS = 12
 // The window's fill: a step lighter than a dark terminal, so it reads as one panel.
 const PANEL = '#2c2e35'
 // The QA report beside the picture, and the width the window needs for it.
-const SIDE = 34
+const SIDE = 40
+// The sidebar's fill: darker than the window, so the report stands apart.
+const SIDEBAR = '#1d1e23'
 const WIDE_ENOUGH = 110
 const current = atom({ plugin: 'image-view', key: 'current' } as const, null)
 
@@ -501,7 +503,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const { fixed, broken } = checkDiff(media.checks, other?.checks)
 
   return (
-    <Box flexDirection="column" width={SIDE}>
+    <Box flexDirection="column" width={SIDE} backgroundColor={SIDEBAR} paddingX={2} paddingY={1}>
       {shown.change && <Text dimColor>CHANGE</Text>}
       {shown.change && <Text>{shown.change}</Text>}
       {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
