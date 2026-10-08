@@ -41,6 +41,8 @@ export type Shown = {
   pair?: Frames
   pairWidth?: number
   pairHeight?: number
+  // moments that line up, [updated, original] seconds, matched by how the frames look
+  sync?: [number, number][]
   label?: string
   overlay?: Overlay
 }

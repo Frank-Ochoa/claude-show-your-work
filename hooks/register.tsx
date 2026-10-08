@@ -152,46 +152,109 @@ export function mapTime(points: [number, number][], t: number, endA: number, end
   return t
 }
 
-// The stretches the original is cut into so each lines up with the updated
-// clip: [start, end] in the original and how much to stretch it.
-export function warpSegments(points: [number, number][], endA: number, endB: number) {
-  const all: [number, number][] = [[0, 0], ...points, [endA, endB]]
-  const out: { from: number; to: number; stretch: number }[] = []
-  for (let i = 1; i < all.length; i++) {
-    const [a0, b0] = all[i - 1]!
-    const [a1, b1] = all[i]!
-    if (b1 - b0 > 0.02 && a1 - a0 > 0.02) out.push({ from: b0, to: b1, stretch: (a1 - a0) / (b1 - b0) })
-  }
-
+// Each frame as a 64×36 grey thumbnail, for matching the two runs by eye.
+async function thumbs($: EngineInterface, f: Frames): Promise<number[][]> {
+  const r = await $.process.run([
+    'sh', '-c',
+    `"$0" -v error -framerate ${f.fps} -i "$1/f%05d.png" -vf scale=64:36,format=gray -f rawvideo - | od -An -tu1 -v`,
+    ffmpeg, f.dir,
+  ])
+  const px = r.stdout.trim().split(/\s+/).map(Number)
+  const out: number[][] = []
+  for (let i = 0; i + 2304 <= px.length; i += 2304) out.push(px.slice(i, i + 2304))
   return out
 }
 
-// Merges the original and updated recordings into one clip, side by side,
-// both on the updated clip's clock, so side by side costs one picture a frame.
+// What moved since the previous frame: the cursor, a fade, a scroll. The two
+// runs move the same way even where the designs differ.
+const motion = (f: number[][]) => f.map((px, i) => (i ? px.map((v, k) => v - f[i - 1]![k]!) : px.map(() => 0)))
+
+// The cheapest way to walk both runs in order, frame by frame (dynamic time
+// warping), matching how frames look and how they move: [updated, original]
+// frame pairs. Holding one side still costs a little, so it only holds where
+// the runs really differ.
+export function align(a: number[][], b: number[][], hold = 0.01): [number, number][] {
+  const n = a.length, m = b.length
+  if (!n || !m) return []
+  const ma = motion(a), mb = motion(b)
+  const diff = (i: number, j: number) => {
+    let d = 0, e = 0
+    const pa = a[i]!, pb = b[j]!, qa = ma[i]!, qb = mb[j]!
+    for (let k = 0; k < pa.length; k++) {
+      d += Math.abs(pa[k]! - pb[k]!)
+      e += Math.abs(qa[k]! - qb[k]!)
+    }
+    return (d + 4 * e) / (pa.length * 255)
+  }
+  const cost = new Float64Array(n * m)
+  const step = new Uint8Array(n * m) // 0 both, 1 updated only, 2 original only
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < m; j++) {
+      const d = diff(i, j)
+      if (!i && !j) { cost[0] = d; continue }
+      const both = i && j ? cost[(i - 1) * m + j - 1]! : Infinity
+      const up = i ? cost[(i - 1) * m + j]! + hold : Infinity
+      const on = j ? cost[i * m + j - 1]! + hold : Infinity
+      const best = Math.min(both, up, on)
+      cost[i * m + j] = best + d
+      step[i * m + j] = best === both ? 0 : best === up ? 1 : 2
+    }
+  }
+  const path: [number, number][] = []
+  for (let i = n - 1, j = m - 1; ; ) {
+    path.push([i, j])
+    if (!i && !j) break
+    const s = step[i * m + j]
+    if (s === 0) { i--; j-- } else if (s === 1) i--
+    else j--
+  }
+  return path.reverse()
+}
+
+// For each updated frame, the original frame shown beside it.
+export function matchOf(path: [number, number][], count: number): number[] {
+  const out = new Array<number>(count).fill(0)
+  for (const [i, j] of path) if (i < count) out[i] = j
+  for (let i = 1; i < count; i++) out[i] = Math.max(out[i]!, out[i - 1]!)
+  return out
+}
+
+// The path cut to the few turns that matter, in seconds, to keep it small.
+export function turns(match: number[], fpsA: number, fpsB: number): [number, number][] {
+  const points: [number, number][] = []
+  for (let i = 1; i < match.length - 1; i++) {
+    const before = match[i]! - match[i - 1]!, after = match[i + 1]! - match[i]!
+    if ((before === 0) !== (after === 0) || Math.abs(before - after) > 1) points.push([+(i / fpsA).toFixed(2), +(match[i]! / fpsB).toFixed(2)])
+  }
+  return points.length > 40 ? points.filter((_, k) => k % Math.ceil(points.length / 40) === 0) : points
+}
+
+// Merges the original and updated recordings into one clip, side by side.
+// The original's frames are matched to the updated clip's by how they look,
+// so every step happens at the same moment on both sides.
 async function preparePair($: EngineInterface, original: Shown, updated: Shown) {
-  const f = updated.frames!
+  const f = updated.frames!, g = original.frames!
   generation += 1
   const dir = `${TMP}/p${generation}-${Math.floor(await $.clock.now())}`
-  await $.process.run(['mkdir', '-p', dir])
-  const side = `fps=${f.fps},scale=-2:360,tpad=stop_mode=clone:stop_duration=30`
-  // Line the original up with the updated clip on the moments both share, so
-  // each step happens at the same time on both sides.
-  const cuts = warpSegments(anchors(updated.checks, original.checks), f.duration, original.frames!.duration)
-  const warp = cuts.length > 1
-    ? cuts.map((c, i) => `[0:v]trim=start=${c.from.toFixed(3)}:end=${c.to.toFixed(3)},setpts=(PTS-STARTPTS)*${c.stretch.toFixed(4)}[w${i}]`).join(';') +
-      `;${cuts.map((_, i) => `[w${i}]`).join('')}concat=n=${cuts.length}:v=1:a=0[o];[o]${side}[a]`
-    : `[0:v]${side}[a]`
+  await $.process.run(['mkdir', '-p', `${dir}/o`])
+  const [ta, tb] = await Promise.all([thumbs($, f), thumbs($, g)])
+  const match = ta.length && tb.length
+    ? matchOf(align(ta, tb), f.count)
+    : Array.from({ length: f.count }, (_, i) => Math.min(g.count - 1, Math.round(mapTime(anchors(updated.checks, original.checks), i / f.fps, f.duration, g.duration) * g.fps)))
+  const links = match.map((j, i) => `ln -sf "$0/${frameFile(g, j).split('/').pop()}" "$1/o/f${String(i + 1).padStart(5, '0')}.png"`).join('\n')
+  await $.process.run(['sh', '-c', links, g.dir, dir])
   const made = await $.process.run([
-    ffmpeg, '-v', 'error', '-i', original.source!, '-i', updated.source!,
-    '-filter_complex', `${warp};[1:v]${side}[b];[a][b]hstack=inputs=2`,
+    ffmpeg, '-v', 'error', '-framerate', String(f.fps), '-i', `${dir}/o/f%05d.png`, '-framerate', String(f.fps), '-i', `${f.dir}/f%05d.png`,
+    '-filter_complex', '[0:v]scale=-2:360[a];[1:v]scale=-2:360[b];[a][b]hstack=inputs=2',
     '-frames:v', String(f.count), '-compression_level', '1', `${dir}/f%05d.png`,
   ])
+  await $.process.run(['rm', '-rf', `${dir}/o`])
   if (made.exitCode !== 0) return null
   const count = (await $.fs.list(dir)).filter(x => x.name.endsWith('.png')).length
   if (!count) return null
   const size = await pngSize($, `${dir}/f00001.png`)
 
-  return { pair: { dir, count, fps: f.fps, duration: f.duration }, pairWidth: size.width, pairHeight: size.height }
+  return { pair: { dir, count, fps: f.fps, duration: f.duration }, pairWidth: size.width, pairHeight: size.height, sync: turns(match, f.fps, g.fps) }
 }
 
 // Resolves a path to something the terminal can draw: a PNG (other image
@@ -298,7 +361,7 @@ const plainAt = (media: Shown, frame: number) =>
 const compareFrame = (shown: Shown, frame: number) => {
   const a = shown.frames, b = shown.compare?.frames
   if (!a || !b) return 0
-  const t = mapTime(anchors(shown.checks, shown.compare?.checks), frame / a.fps, a.duration, b.duration)
+  const t = mapTime(shown.sync ?? anchors(shown.checks, shown.compare?.checks), frame / a.fps, a.duration, b.duration)
   return Math.max(0, Math.min(b.count - 1, Math.round(t * b.fps)))
 }
 
@@ -484,7 +547,7 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
   // Same moment on the other side, lined up on the steps both runs share.
   if (toCompare) one.frame = compareFrame(shown, one.frame)
   else if (from.frames && to.frames) {
-    const back = anchors(shown.checks, shown.compare.checks).map(([a, b]) => [b, a] as [number, number])
+    const back = (shown.sync ?? anchors(shown.checks, shown.compare.checks)).map(([a, b]) => [b, a] as [number, number])
     const t = mapTime(back, one.frame / from.frames.fps, from.frames.duration, to.frames.duration)
     one.frame = Math.max(0, Math.min(to.frames.count - 1, Math.round(t * to.frames.fps)))
   }

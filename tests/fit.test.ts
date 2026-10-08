@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, warpSegments, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -132,9 +132,15 @@ test('both runs line up on the steps they share', () => {
   const pts = anchors(updated, original)
   expect(pts.length).toBe(3)
   expect(Math.abs(mapTime(pts, 7.9, 18.9, 18.5) - 7.5) < 0.01).toBe(true)
-  const cuts = warpSegments(pts, 18.9, 18.5)
-  expect(cuts[0]!.from).toBe(0)
-  expect(cuts.at(-1)!.to).toBe(18.5)
+})
+
+test('runs line up by how their frames look, even where one waits longer', () => {
+  // the original holds its 3rd frame three times as long (a slower load)
+  const frame = (v: number) => Array(8).fill(v)
+  const updated = [0, 40, 80, 120, 160, 200].map(frame)
+  const original = [0, 40, 80, 80, 80, 120, 160, 200].map(frame)
+  const match = matchOf(align(updated, original), updated.length)
+  expect(match).toEqual([0, 1, 4, 5, 6, 7])
 })
 
 test('the QA line totals the summary', () => {
