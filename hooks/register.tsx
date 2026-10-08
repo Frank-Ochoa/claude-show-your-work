@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Check, Frames, Overlay, Shown } from '../types'
+import type { Check, Frames, Note, Overlay, Shown } from '../types'
 
 const PANE = 'image-view'
 const TOOLS = ['mcp__image-view__show_image', 'mcp__image-view__show_video']
@@ -26,7 +26,17 @@ let generation = 0
 let pastedNames: string[] = []
 
 // Playback per drawn site (a transcript row's tool_use_id, or the pane).
-type Player = { frame: number; timer?: Timer; isCompare?: boolean; isSplit?: boolean; hasAutoplayed?: boolean }
+type Player = {
+  frame: number
+  timer?: Timer
+  isCompare?: boolean
+  isSplit?: boolean
+  hasAutoplayed?: boolean
+  // commenting: picking a spot, then writing the note for it
+  mode?: 'place' | 'write'
+  spot?: { x: number; y: number }
+  notes?: Note[]
+}
 const players = new Map<string, Player>()
 const player = (site: string): Player => {
   let one = players.get(site)
@@ -178,8 +188,19 @@ export function playWord(isPlaying: boolean, frame: number, count: number) {
 const sideOf = (shown: Shown, site: string): Shown =>
   player(site).isCompare && shown.compare ? shown.compare : shown
 
-const fileAt = (media: Shown, frame: number) =>
+const plainAt = (media: Shown, frame: number) =>
   media.frames ? frameFile(media.frames, Math.min(frame, media.frames.count - 1)) : media.path
+
+// Frames with pins drawn on them, by site and frame.
+const pinned = new Map<string, string>()
+const pinKey = (site: string, media: Shown, frame: number) => `${site}:${media.generation}:${media.frames ? frame : 0}`
+
+// What a frame shows: its pinned version while paused, else the plain frame.
+const fileAt = (media: Shown, frame: number, site?: string) => {
+  const pins = site && !player(site).timer ? pinned.get(pinKey(site, media, frame)) : undefined
+
+  return pins ?? plainAt(media, frame)
+}
 
 // The compared side's frame at the moment the shown side is at.
 const compareFrame = (shown: Shown, frame: number) => sameMoment(shown.frames, shown.compare?.frames, frame)
@@ -191,7 +212,7 @@ function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
     void $.ui.blit({ requestId: site, key: 'view-b', source: { file: fileAt(shown, one.frame), format: 'png' } })
     return
   }
-  void $.ui.blit({ requestId: site, key: 'view', source: { file: fileAt(media, one.frame), format: 'png' } })
+  void $.ui.blit({ requestId: site, key: 'view', source: { file: fileAt(media, one.frame, site), format: 'png' } })
 }
 
 // The latest check up to a moment whose result differs between the sides.
@@ -284,7 +305,7 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
     <Box position="relative" width={box.columns} height={box.rows}>
       <Image
         key="view"
-        source={{ file: fileAt(media, one.frame), format: 'png', generation: media.generation }}
+        source={{ file: fileAt(media, one.frame, site), format: 'png', generation: media.generation }}
         columns={box.columns}
         rows={box.rows}
         alt={`[${media.kind ?? 'image'}: ${shown.title} — this terminal cannot draw images]`}
@@ -309,6 +330,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   const total = clock(frames.duration)
   const segments = Math.max(6, width - (word.length + 4) - elapsed.length - total.length - 4)
   const playhead = Math.min(segments - 1, Math.round((one.frame / Math.max(1, frames.count - 1)) * (segments - 1)))
+  const noted = new Set((one.notes ?? []).map(n => Math.round((n.at / Math.max(0.1, frames.duration)) * (segments - 1))))
 
   return (
     <Box flexDirection="row" flexWrap="nowrap" width={width}>
@@ -319,7 +341,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
           key={`seek-${i}`}
           plain
           dimColor={i > playhead}
-          label={i === playhead ? '●' : i < playhead ? '━' : '─'}
+          label={i === playhead ? '●' : noted.has(i) ? '◆' : i < playhead ? '━' : '─'}
           onPress={() => seek($, site, media, (i / (segments - 1)) * frames.duration, shown)}
         />
       ))}
@@ -447,6 +469,143 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
   )
 }
 
+// The page the moment shows: the latest check's url up to now, else the item's.
+export function urlAt(shown: Shown, seconds: number): string | undefined {
+  const hit = (shown.checks ?? []).filter(c => c.url && (c.at ?? 0) <= seconds).at(-1)
+
+  return hit?.url ?? shown.url
+}
+
+// Draws pin n at (x, y) on the frame shown now, over any pins already there.
+async function addPin($: EngineInterface, site: string, media: Shown, x: number, y: number, text: string) {
+  const one = player(site)
+  const notes = (one.notes ??= [])
+  const n = notes.length + 1
+  const frame = media.frames ? one.frame : 0
+  const base = pinned.get(pinKey(site, media, frame)) ?? plainAt(media, frame)
+  const size = Math.max(28, Math.round(media.height * 0.075))
+  const out = `${TMP}/notes/${site.replace(/[^\w-]/g, '')}-${frame}-${n}.png`
+  await $.process.run(['mkdir', '-p', `${TMP}/notes`])
+  const made = await $.process.run([
+    ffmpeg, '-v', 'error', '-y', '-i', base, '-i', `${$.plugin.root}/assets/pins/${Math.min(n, 20)}.png`,
+    '-filter_complex', `[1]scale=${size}:${size}[pin];[0][pin]overlay=${Math.round(x * media.width - size / 2)}:${Math.round(y * media.height - size / 2)}`,
+    out,
+  ])
+  if (made.exitCode !== 0) return $.ui.toast(`Could not draw the pin: ${made.stderr.trim().slice(0, 120)}`)
+  pinned.set(pinKey(site, media, frame), out)
+  notes.push({ n, at: media.frames ? frame / media.frames.fps : 0, frame, x, y, text, file: out })
+  one.mode = undefined
+  one.spot = undefined
+  draw($, site, media)
+  $.ui.invalidate('ui.render')
+}
+
+// The notes as a prompt for the agent: where, when, what, and the pinned frames.
+export function notesPrompt(shown: Shown, notes: Note[], isVideo: boolean): string {
+  const where = (n: Note) => `${Math.round(n.x * 100)}% across, ${Math.round(n.y * 100)}% down`
+  const lines = notes.map(n => `${n.n}. ${isVideo ? `at ${clock(n.at)}, ` : ''}${where(n)}: ${n.text} (pinned frame: ${n.file})`)
+
+  return [`Feedback on "${shown.title}" (${shown.source ?? shown.path}):`, ...lines].join('\n')
+}
+
+const GRID_COLS = 16
+const GRID_ROWS = 6
+
+// Commenting: a small map of the picture to pick the spot, then the note.
+function Commenting(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, width: number) {
+  const { Box, Text, Button, Input } = ui
+  const one = player(site)
+  if (one.mode === 'place') {
+    return (
+      <Box flexDirection="column" width={width} marginTop={1}>
+        <Box flexDirection="row" gap={2}>
+          <Text bold>Where? Click the spot on this map of the picture</Text>
+          <Button key="cancel" plain dimColor label="Cancel" onPress={() => { one.mode = undefined; $.ui.invalidate('ui.render') }} />
+        </Box>
+        {Array.from({ length: GRID_ROWS }, (_, r) => (
+          <Box key={`gr-${r}`} flexDirection="row">
+            {Array.from({ length: GRID_COLS }, (_, c) => (
+              <Button
+                key={`g-${r}-${c}`}
+                plain
+                dimColor
+                label=" ·"
+                onPress={() => {
+                  one.spot = { x: (c + 0.5) / GRID_COLS, y: (r + 0.5) / GRID_ROWS }
+                  one.mode = 'write'
+                  $.ui.invalidate('ui.render')
+                }}
+              />
+            ))}
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+  if (one.mode === 'write' && one.spot && Input) {
+    const n = (one.notes?.length ?? 0) + 1
+    const spot = one.spot
+
+    return (
+      <Box flexDirection="column" width={width} marginTop={1}>
+        <Input
+          key="note"
+          autoFocus
+          label={`Note ${n}`}
+          placeholder="What should change here?"
+          submitLabel="Pin it"
+          onSubmit={(text: string) => text.trim() && void addPin($, site, media, spot.x, spot.y, text.trim())}
+        />
+      </Box>
+    )
+  }
+
+  return null
+}
+
+// The pinned notes: each jumps to its moment; send them all to the agent.
+function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, width: number) {
+  const { Box, Text, Button } = ui
+  const notes = player(site).notes ?? []
+  if (!notes.length) return null
+
+  return (
+    <Box flexDirection="column" width={width} marginTop={1}>
+      {notes.map(n => (
+        <Button
+          key={`note-${n.n}`}
+          plain
+          label={`${n.n}  ${media.frames ? clock(n.at) + '  ' : ''}${n.text}`}
+          onPress={() => media.frames && seek($, site, media, n.at)}
+        />
+      ))}
+      <Box flexDirection="row" gap={2} marginTop={1}>
+        <Button
+          key="send"
+          variant="primary"
+          label={`Send ${notes.length} note${notes.length > 1 ? 's' : ''} to Claude`}
+          onPress={() =>
+            void $.prompt.submit({ text: notesPrompt(shown, notes, !!media.frames) }).then(() => $.ui.toast('Sent to Claude'))
+          }
+        />
+        <Button
+          key="clear"
+          plain
+          dimColor
+          label="Clear notes"
+          onPress={() => {
+            player(site).notes = []
+            for (const key of [...pinned.keys()]) if (key.startsWith(`${site}:`)) pinned.delete(key)
+            draw($, site, media)
+            $.ui.invalidate('ui.render')
+          }}
+        />
+        <Text dimColor>numbers match the pins on the picture</Text>
+      </Box>
+    </Box>
+  )
+}
+
 // The player: concept A (picture, scrub row, controls) everywhere; concept B
 // (A plus the QA report at its side) when there is a report and room for it.
 function Viewer(
@@ -487,11 +646,32 @@ function Viewer(
     void $.clock.sleep(400).then(() => play($, site, media, shown), () => undefined)
   }
 
-  // With a before recording, open side by side: the change is the point.
-  if (one.isSplit === undefined && shown.compare?.frames && frames) one.isSplit = true
+  // The single view with the QA sidebar is the default; side by side is a click away.
   if (one.isSplit && shown.compare && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
 
   const actions = Actions(ui, $, media, source, isNarrow)
+  const page = urlAt(media, frames ? one.frame / frames.fps : 0)
+  const pageButton = page ? (
+    <Button
+      key="page"
+      plain
+      label="↗ Open page"
+      onPress={() => void $.process.run(['open', page]).then(r => $.ui.toast(r.exitCode === 0 ? `Opened ${page.slice(0, 60)}` : 'Could not open the page'))}
+    />
+  ) : null
+  const commentButton = (
+    <Button
+      key="comment"
+      plain
+      label="✎ Comment"
+      onPress={() => {
+        one.timer?.cancel()
+        one.timer = undefined
+        one.mode = 'place'
+        $.ui.invalidate('ui.render')
+      }}
+    />
+  )
 
   const stage = (
     <Box flexDirection="column" width={box.columns}>
@@ -504,12 +684,20 @@ function Viewer(
             <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />
             {!isWide && Tabs(ui, $, site, shown)}
             {!isWide && shown.compare && <Button key="split" plain label="⧉ Side by side" onPress={() => split($, site, shown, true)} />}
+            {commentButton}
+            {pageButton}
           </Box>
         ) : (
-          (!isWide && Tabs(ui, $, site, shown)) || <Text> </Text>
+          <Box flexDirection="row" gap={2}>
+            {!isWide && Tabs(ui, $, site, shown)}
+            {commentButton}
+            {pageButton}
+          </Box>
         )}
         {actions}
       </Box>
+      {Commenting(ui, $, site, shown, media, box.columns)}
+      {NotesList(ui, $, site, shown, media, box.columns)}
     </Box>
   )
 
@@ -581,7 +769,11 @@ function SplitView(
     <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1} width={width + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2} width={width}>
         <Text bold wrap="truncate-end">{shown.title}</Text>
-        <Box flexDirection="row" gap={2}>{prLink}<Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} /></Box>
+        <Box flexDirection="row" gap={2}>
+          {prLink}
+          <Button key="comment" plain label="✎ Comment" onPress={() => { split($, site, shown, false); player(site).mode = 'place'; $.ui.invalidate('ui.render') }} />
+          <Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} />
+        </Box>
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
       <Box flexDirection="row" gap={2} marginTop={1}>
@@ -614,12 +806,25 @@ function SplitView(
   )
 }
 
+// The one line a show call's row reads: what it shows, and what with.
+export function toolLine(tool: string, input: unknown, isRunning: boolean): string {
+  const i = (input ?? {}) as { path?: string; title?: string; compare?: string; compare_label?: string; checks?: unknown[] }
+  const what = i.title ?? i.path?.split('/').pop() ?? ''
+  const extra = [
+    i.compare ? `vs ${i.compare_label ?? i.compare.split('/').pop()}` : '',
+    i.checks?.length ? `${i.checks.length} checks` : '',
+  ].filter(Boolean)
+  const verb = tool.endsWith('video') ? (isRunning ? 'Cutting video' : 'Video') : isRunning ? 'Loading image' : 'Image'
+
+  return `${tool.endsWith('video') ? '▶' : '▣'} ${verb} · ${what}${extra.length ? ' · ' + extra.join(' · ') : ''}`
+}
+
 const CHECKS = {
   type: 'array',
-  description: 'For QA: the checks run, each { name, ok, at? (seconds into the clip) }',
+  description: 'For QA: the checks run, each { name, ok, at? (seconds into the clip), url? (the page at that moment) }',
   items: {
     type: 'object',
-    properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' } },
+    properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' } },
     required: ['name', 'ok'],
   },
 }
@@ -631,6 +836,7 @@ const TOOL_INPUT = {
     title: { type: 'string', description: 'Short caption: what it is' },
     change: { type: 'string', description: 'For QA: one line on what changed' },
     pr: { type: 'string', description: 'For QA: the PR URL or number this belongs to' },
+    url: { type: 'string', description: 'The page this shows (a localhost or deployed URL): adds an Open page button' },
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the before version, image or video; adds Before/After tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
@@ -720,7 +926,7 @@ export const register: Register = on => {
 
   on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
     const input = e as unknown as {
-      path?: string; title?: string; change?: string; pr?: string; checks?: Check[]
+      path?: string; title?: string; change?: string; pr?: string; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
     }
     if (!input.path) return { deny: 'A path is needed.' }
@@ -729,6 +935,7 @@ export const register: Register = on => {
         ...(await prepare($, input.path, input.title)),
         change: input.change,
         pr: input.pr,
+        url: input.url,
         checks: input.checks,
         label: input.label,
         overlay: input.overlay,
@@ -747,6 +954,15 @@ export const register: Register = on => {
       return { deny: `image-view: ${(err as Error).message}` }
     }
   }).catch(() => ({ deny: 'image-view: it could not be shown.' }))
+
+  // The call's own row: one short line, not the whole input.
+  on('ui.render', { component: 'ToolUse' }, ($, e, next) => {
+    const props = e.props as { tool: string; input: unknown; isRunning: boolean }
+    if (!TOOLS.includes(props.tool)) return next(e)
+    const { Text } = $.ui.resolve(e) as Ui
+
+    return <Text>{toolLine(props.tool, props.input, props.isRunning)}</Text>
+  })
 
   // Inline in the transcript: the player is the tool's result row.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {

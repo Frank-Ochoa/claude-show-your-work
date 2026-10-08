@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changeAt, checkDiff, isScratch, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { changeAt, checkDiff, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -88,4 +88,25 @@ test('temp files are scratch, finished work is not', () => {
   expect(isScratch('/private/tmp/claude-501/x/qa.webm')).toBe(true)
   expect(isScratch('/var/folders/rq/x/T/shot.png')).toBe(true)
   expect(isScratch('/Users/u/Movies/launch.mp4')).toBe(false)
+})
+
+test('the call row is one short line', () => {
+  const line = toolLine('mcp__image-view__show_video', { path: '/tmp/x/qa.webm', title: 'Agent QA', compare: '/tmp/b.webm', compare_label: 'Live', checks: [1, 2, 3] }, false)
+  expect(line).toBe('▶ Video · Agent QA · vs Live · 3 checks')
+  expect(toolLine('mcp__image-view__show_image', { path: '/a/b/shot.png' }, true)).toBe('▣ Loading image · shot.png')
+})
+
+test('open page follows the latest check with a url', () => {
+  const shown = { path: '/a', width: 1, height: 1, title: 't', generation: 1, url: 'http://localhost:3000/',
+    checks: [{ name: 'a', ok: true, at: 2, url: 'http://localhost:3000/#slide-07' }, { name: 'b', ok: true, at: 6, url: 'http://localhost:3000/#slide-10' }] }
+  expect(urlAt(shown, 1)).toBe('http://localhost:3000/')
+  expect(urlAt(shown, 3)).toBe('http://localhost:3000/#slide-07')
+  expect(urlAt(shown, 9)).toBe('http://localhost:3000/#slide-10')
+})
+
+test('notes become a prompt with where, when and the pinned frame', () => {
+  const shown = { path: '/a.png', source: '/w/qa.webm', width: 1, height: 1, title: 'Agent QA', generation: 1 }
+  const text = notesPrompt(shown, [{ n: 1, at: 7.4, frame: 89, x: 0.25, y: 0.5, text: 'Logo too small', file: '/tmp/p.png' }], true)
+  expect(text).toContain('Feedback on "Agent QA" (/w/qa.webm)')
+  expect(text).toContain('1. at 0:07, 25% across, 50% down: Logo too small (pinned frame: /tmp/p.png)')
 })

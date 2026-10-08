@@ -1,7 +1,11 @@
 export type Frames = { dir: string; count: number; fps: number; duration: number }
 
 // One QA check: its name, whether it passed, and when it happens in a clip.
-export type Check = { name: string; ok: boolean; at?: number }
+export type Check = { name: string; ok: boolean; at?: number; url?: string }
+
+// A note the person pinned: where (0..1 across and down), when, and the
+// frame with its numbered pin drawn on.
+export type Note = { n: number; at: number; frame: number; x: number; y: number; text: string; file: string }
 
 // A play button over the centre of a paused video, or none. (A grid of
 // buttons over the whole picture was tried: it erases the picture.)
@@ -21,6 +25,8 @@ export type Shown = {
   // QA context: the change, its PR, the checks run
   change?: string
   pr?: string
+  // the page the recording or picture is of, to open it there
+  url?: string
   checks?: Check[]
   // the other side of a before/after, and the two sides' names
   compare?: Shown
