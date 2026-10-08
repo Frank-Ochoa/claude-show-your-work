@@ -24,8 +24,10 @@ const HUD = () => {
 ;(async () => {
   const browser = await chromium.launch()
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, recordVideo: { dir: outDir, size: { width: 1280, height: 720 } } })
+  // the recording starts with the page, so the clock does too: `at` = seconds into the video
+  const t0 = Date.now()
   const page = await ctx.newPage()
-  const t0 = Date.now(), wait = ms => page.waitForTimeout(ms), glide = (x, y, s = 20) => page.mouse.move(x, y, { steps: s })
+  const wait = ms => page.waitForTimeout(ms), glide = (x, y, s = 20) => page.mouse.move(x, y, { steps: s })
   const results = []
   const log = async (name, ok, el) => {
     results.push({ name, ok, at: Math.round((Date.now() - t0) / 100) / 10 })
