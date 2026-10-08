@@ -3,6 +3,14 @@ export type Frames = { dir: string; count: number; fps: number; duration: number
 // One QA check: its name, whether it passed, and when it happens in a clip.
 export type Check = { name: string; ok: boolean; at?: number; url?: string }
 
+// One change to review: what changed, optionally when it shows in the clip and
+// the page it is on.
+export type KeyChange = { title: string; detail?: string; at?: number; url?: string }
+
+// One line of the QA summary: a group of checks, whether it passed, and how
+// many of its checks did.
+export type Summary = { label: string; ok: boolean; passed?: number; total?: number }
+
 // A note the person pinned: where (0..1 across and down), when, and the
 // frame with its numbered pin drawn on.
 export type Note = { n: number; at: number; frame: number; x: number; y: number; text: string; file: string }
@@ -28,6 +36,9 @@ export type Shown = {
   // the page the recording or picture is of, to open it there
   url?: string
   checks?: Check[]
+  // what to review, and the QA in three lines
+  changes?: KeyChange[]
+  summary?: Summary[]
   // the other side of a before/after, and the two sides' names
   compare?: Shown
   // Original and Updated merged into one clip, side by side, and its size

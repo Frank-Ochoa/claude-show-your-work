@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Check, Frames, Note, Overlay, Shown } from '../types'
+import type { Check, Frames, KeyChange, Note, Overlay, Shown, Summary } from '../types'
 
 const PANE = 'image-view'
 const TOOLS = ['mcp__image-view__show_image', 'mcp__image-view__show_video']
@@ -36,6 +36,8 @@ type Player = {
   hasAutoplayed?: boolean
   // how many bar cells the scrub row last drew, so playback redraws only on a change
   segments?: number
+  // which page of key changes the sidebar shows
+  changesPage?: number
   // the picture's size in cells as last drawn, for repaints
   box?: { columns: number; rows: number }
   // commenting: picking a spot, then writing the note for it
@@ -122,6 +124,52 @@ async function prepareVideo($: EngineInterface, real: string, title: string): Pr
   return { kind: 'video', path: poster, source: real, ...(await pngSize($, poster)), title, generation, frames }
 }
 
+// Moments both runs share (a check by the same name), as [updated, original]
+// seconds, kept only while both clocks move forward.
+export function anchors(updated: Check[] = [], original: Check[] = []): [number, number][] {
+  const at = new Map(original.filter(c => c.at !== undefined).map(c => [c.name, c.at!]))
+  const pairs = updated
+    .filter(c => c.at !== undefined && at.has(c.name))
+    .map(c => [c.at!, at.get(c.name)!] as [number, number])
+    .sort((a, b) => a[0] - b[0])
+  const kept: [number, number][] = []
+  for (const p of pairs) {
+    const last = kept.at(-1) ?? [0, 0]
+    if (p[0] > last[0] + 0.05 && p[1] > last[1] + 0.05) kept.push(p)
+  }
+
+  return kept
+}
+
+// The original clip's moment that matches a moment of the updated clip.
+export function mapTime(points: [number, number][], t: number, endA: number, endB: number): number {
+  const all: [number, number][] = [[0, 0], ...points, [endA, endB]]
+  for (let i = 1; i < all.length; i++) {
+    const [a0, b0] = all[i - 1]!
+    const [a1, b1] = all[i]!
+    if (t <= a1 || i === all.length - 1) {
+      const k = a1 > a0 ? (b1 - b0) / (a1 - a0) : 1
+      return Math.max(0, Math.min(endB, b0 + (t - a0) * k))
+    }
+  }
+
+  return t
+}
+
+// The stretches the original is cut into so each lines up with the updated
+// clip: [start, end] in the original and how much to stretch it.
+export function warpSegments(points: [number, number][], endA: number, endB: number) {
+  const all: [number, number][] = [[0, 0], ...points, [endA, endB]]
+  const out: { from: number; to: number; stretch: number }[] = []
+  for (let i = 1; i < all.length; i++) {
+    const [a0, b0] = all[i - 1]!
+    const [a1, b1] = all[i]!
+    if (b1 - b0 > 0.02 && a1 - a0 > 0.02) out.push({ from: b0, to: b1, stretch: (a1 - a0) / (b1 - b0) })
+  }
+
+  return out
+}
+
 // Merges the original and updated recordings into one clip, side by side,
 // both on the updated clip's clock, so side by side costs one picture a frame.
 async function preparePair($: EngineInterface, original: Shown, updated: Shown) {
@@ -130,9 +178,16 @@ async function preparePair($: EngineInterface, original: Shown, updated: Shown) 
   const dir = `${TMP}/p${generation}-${Math.floor(await $.clock.now())}`
   await $.process.run(['mkdir', '-p', dir])
   const side = `fps=${f.fps},scale=-2:360,tpad=stop_mode=clone:stop_duration=30`
+  // Line the original up with the updated clip on the moments both share, so
+  // each step happens at the same time on both sides.
+  const cuts = warpSegments(anchors(updated.checks, original.checks), f.duration, original.frames!.duration)
+  const warp = cuts.length > 1
+    ? cuts.map((c, i) => `[0:v]trim=start=${c.from.toFixed(3)}:end=${c.to.toFixed(3)},setpts=(PTS-STARTPTS)*${c.stretch.toFixed(4)}[w${i}]`).join(';') +
+      `;${cuts.map((_, i) => `[w${i}]`).join('')}concat=n=${cuts.length}:v=1:a=0[o];[o]${side}[a]`
+    : `[0:v]${side}[a]`
   const made = await $.process.run([
     ffmpeg, '-v', 'error', '-i', original.source!, '-i', updated.source!,
-    '-filter_complex', `[0:v]${side}[a];[1:v]${side}[b];[a][b]hstack=inputs=2`,
+    '-filter_complex', `${warp};[1:v]${side}[b];[a][b]hstack=inputs=2`,
     '-frames:v', String(f.count), '-compression_level', '1', `${dir}/f%05d.png`,
   ])
   if (made.exitCode !== 0) return null
@@ -254,7 +309,12 @@ const fileAt = (media: Shown, frame: number, site?: string) => {
 }
 
 // The compared side's frame at the moment the shown side is at.
-const compareFrame = (shown: Shown, frame: number) => sameMoment(shown.frames, shown.compare?.frames, frame)
+const compareFrame = (shown: Shown, frame: number) => {
+  const a = shown.frames, b = shown.compare?.frames
+  if (!a || !b) return 0
+  const t = mapTime(anchors(shown.checks, shown.compare?.checks), frame / a.fps, a.duration, b.duration)
+  return Math.max(0, Math.min(b.count - 1, Math.round(t * b.fps)))
+}
 
 // Pictures go to the terminal as PNG bytes, not file paths: a background
 // session's terminal cannot open files on this machine, bytes always reach it.
@@ -435,7 +495,13 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
   one.timer = undefined
   one.isCompare = toCompare
   const to = sideOf(shown, site)
-  one.frame = sameMoment(from.frames, to.frames, one.frame)
+  // Same moment on the other side, lined up on the steps both runs share.
+  if (toCompare) one.frame = compareFrame(shown, one.frame)
+  else if (from.frames && to.frames) {
+    const back = anchors(shown.checks, shown.compare.checks).map(([a, b]) => [b, a] as [number, number])
+    const t = mapTime(back, one.frame / from.frames.fps, from.frames.duration, to.frames.duration)
+    one.frame = Math.max(0, Math.min(to.frames.count - 1, Math.round(t * to.frames.fps)))
+  }
   draw($, site, to)
   if (wasPlaying && to.frames) play($, site, to)
   redraw($, site)
@@ -582,29 +648,79 @@ function Changes(ui: Ui, $: EngineInterface, site: string, shown: Shown, fixed: 
   )
 }
 
-function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui) {
+// The QA line on top: how many checks passed, from the summary or the checks.
+export function qaTotals(summary: Summary[] = [], checks: Check[] = []) {
+  if (summary.some(s => s.total !== undefined)) {
+    const total = summary.reduce((n, s) => n + (s.total ?? 0), 0)
+    const passed = summary.reduce((n, s) => n + (s.passed ?? (s.ok ? s.total ?? 0 : 0)), 0)
+    return { passed, total }
+  }
+
+  return { passed: checks.filter(c => c.ok).length, total: checks.length }
+}
+
+// How many key changes fit, given the sidebar's height and what else it holds.
+export function changesThatFit(height: number, summaryLines: number, hasPr: boolean, hasCompare: boolean) {
+  const fixed = 2 /* padding */ + 1 /* WHAT CHANGED */ + 2 /* QA head + gap */ + summaryLines + (hasPr ? 2 : 0) + (hasCompare ? 4 : 0)
+  return Math.max(1, height - fixed)
+}
+
+// The sidebar, exactly as tall as the player: what changed (each one jumps to
+// its moment), then the QA in three lines. More changes than fit page through.
+function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, height: number) {
   const { Box, Text, Button } = ui
+  const one = player(site)
   const media = sideOf(shown, site)
-  const checks = media.checks ?? []
-  const other = player(site).isCompare ? shown : shown.compare
-  const { fixed, broken } = checkDiff(media.checks, other?.checks)
+  const changes: KeyChange[] = shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : []
+  const summary = (shown.summary ?? []).slice(0, 3)
+  const { passed, total } = qaTotals(summary, media.checks)
+  const allPass = total > 0 && passed === total
+  const room = changesThatFit(height, summary.length, !!prLink, !!shown.compare)
+  const pages = Math.max(1, Math.ceil(changes.length / room))
+  const page = Math.min(one.changesPage ?? 0, pages - 1)
+  const shownChanges = changes.slice(page * room, page * room + room)
 
   return (
-    <Box flexDirection="column" width={SIDE} backgroundColor={SIDEBAR} paddingX={2} paddingY={1}>
-      {shown.change && <Text dimColor>CHANGE</Text>}
-      {shown.change && <Text>{shown.change}</Text>}
-      {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
-      {checks.length > 0 && <Text dimColor>{'\n'}CHECKS</Text>}
-      {checks.slice(0, 12).map(c => (
-        <Text key={`c-${c.name}`} wrap="truncate-end">
-          <Text color={c.ok ? 'success' : 'error'}>{c.ok ? '✓' : '✗'}</Text> {c.name}
-        </Text>
+    <Box flexDirection="column" width={SIDE} height={height} overflow="hidden" backgroundColor={SIDEBAR} paddingX={2} paddingY={1}>
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text dimColor>WHAT CHANGED</Text>
+        {pages > 1 && (
+          <Button
+            key="changes-more"
+            plain
+            dimColor
+            label={`${page + 1}/${pages} ↓`}
+            onPress={() => {
+              one.changesPage = (page + 1) % pages
+              redraw($, site)
+            }}
+          />
+        )}
+      </Box>
+      {shownChanges.map((c, i) => (
+        <Button
+          key={`change-${page * room + i}`}
+          plain
+          label={`${page * room + i + 1}  ${c.title}${c.at !== undefined ? `  ${clock(c.at)}` : ''}`}
+          onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
+        />
       ))}
-      {checks.length > 12 && <Text dimColor>+{checks.length - 12} more</Text>}
-      {other && (fixed.length > 0 || broken.length > 0) && <Text dimColor>{'\n'}VS {(other.label ?? 'ORIGINAL').toUpperCase()}</Text>}
-      {Changes(ui, $, site, shown, fixed, broken)}
+      {total > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color={allPass ? 'success' : 'error'}>
+            {allPass ? '✓' : '✗'} QA · {passed} of {total} checks passed
+          </Text>
+          {summary.map(s => (
+            <Text key={`sum-${s.label}`} wrap="truncate-end">
+              <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text> {s.label}
+              {s.total !== undefined && <Text dimColor> {s.passed ?? (s.ok ? s.total : 0)}/{s.total}</Text>}
+            </Text>
+          ))}
+        </Box>
+      )}
+      {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
       {shown.compare && <Box marginTop={1}>{Tabs(ui, $, site, shown)}</Box>}
-      {shown.compare && media.frames && (
+      {shown.compare && media.frames && shown.pair && (
         <Box marginTop={1}>
           <Button key="split" variant="primary" label="⧉ Side by side" onPress={() => split($, site, shown, true)} />
         </Box>
@@ -849,7 +965,7 @@ async function Viewer(
   const frames = media.frames
   const source = media.source ?? media.path
   const columns = viewport?.columns ?? 100
-  const hasReport = !!(shown.change || shown.checks?.length)
+  const hasReport = !!(shown.change || shown.changes?.length || shown.summary?.length || shown.checks?.length)
   const isWide = hasReport && columns - 8 >= WIDE_ENOUGH
   const room = columns - (isPane ? 6 : 10) - (isWide ? SIDE + 3 : 0)
   const box = sizeFor(shown.width, shown.height, room, viewport?.rows ?? 40, isPane)
@@ -956,7 +1072,7 @@ async function Viewer(
       )}
       <Box flexDirection="row" gap={3} marginTop={1}>
         {stage}
-        {isWide && Report(ui, $, site, shown, prLink)}
+        {isWide && Report(ui, $, site, shown, prLink, box.rows + (frames ? 3 : 2))}
       </Box>
     </Box>
   )
@@ -1076,6 +1192,16 @@ const TOOL_INPUT = {
     change: { type: 'string', description: 'For QA: one line on what changed' },
     pr: { type: 'string', description: 'For QA: the PR URL or number this belongs to' },
     url: { type: 'string', description: 'The page this shows (a localhost or deployed URL): adds an Open page button' },
+    changes: {
+  type: 'array',
+  description: 'The key changes to review, newest work first: each { title (a few words), detail?, at? (seconds into the clip), url? }',
+  items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, at: { type: 'number' }, url: { type: 'string' } }, required: ['title'] },
+},
+    summary: {
+  type: 'array',
+  description: 'The QA in at most 3 lines, grouping the checks: each { label, ok, passed?, total? }',
+  items: { type: 'object', properties: { label: { type: 'string' }, ok: { type: 'boolean' }, passed: { type: 'number' }, total: { type: 'number' } }, required: ['label', 'ok'] },
+},
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
@@ -1169,7 +1295,7 @@ export const register: Register = on => {
   on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
-      path?: string; title?: string; change?: string; pr?: string; url?: string; checks?: Check[]
+      path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
     }
     if (!input.path) return { deny: 'A path is needed.' }
@@ -1180,6 +1306,8 @@ export const register: Register = on => {
         pr: input.pr,
         url: input.url,
         checks: input.checks,
+        changes: input.changes,
+        summary: input.summary,
         label: input.label,
         overlay: input.overlay,
       }

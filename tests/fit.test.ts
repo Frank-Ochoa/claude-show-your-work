@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { barChunks, changeAt, checkDiff, resultWords, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { anchors, barChunks, changeAt, mapTime, qaTotals, warpSegments, checkDiff, resultWords, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -132,4 +132,20 @@ test('the bar is a few wide buttons that still cover every cell', () => {
   expect(chunks.map(c => c.label).join('')[20]).toBe('●')
   expect(chunks[0]!.isAhead).toBe(false)
   expect(chunks.at(-1)!.isAhead).toBe(true)
+})
+
+test('both runs line up on the steps they share', () => {
+  const updated = [{ name: 'nav', ok: true, at: 6.2 }, { name: 'BID', ok: true, at: 7.9 }, { name: 'end', ok: true, at: 14.6 }]
+  const original = [{ name: 'nav', ok: true, at: 5.9 }, { name: 'BID', ok: false, at: 7.5 }, { name: 'end', ok: true, at: 14.3 }]
+  const pts = anchors(updated, original)
+  expect(pts.length).toBe(3)
+  expect(Math.abs(mapTime(pts, 7.9, 18.9, 18.5) - 7.5) < 0.01).toBe(true)
+  const cuts = warpSegments(pts, 18.9, 18.5)
+  expect(cuts[0]!.from).toBe(0)
+  expect(cuts.at(-1)!.to).toBe(18.5)
+})
+
+test('the QA line totals the summary', () => {
+  expect(qaTotals([{ label: 'a', ok: true, passed: 4, total: 4 }, { label: 'b', ok: false, passed: 1, total: 3 }])).toEqual({ passed: 5, total: 7 })
+  expect(qaTotals([], [{ name: 'x', ok: true }, { name: 'y', ok: false }])).toEqual({ passed: 1, total: 2 })
 })
