@@ -265,6 +265,8 @@ function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
 let canImage = true
 let probed = false
 let sessionId = ''
+// Sites where the person chose the low-res cells over the warning.
+const wantsLowRes = new Set<string>()
 
 const raster = new Map<string, Promise<string>>()
 const rasterSizes = new Map<string, number>()
@@ -348,7 +350,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
     const r = await $.ui.blit({ requestId: site, key, source: pic.src })
     if (r.deny && /alt/i.test(r.deny)) {
       canImage = false
-      $.ui.toast('Pictures are low-res here: this is a background session. See the note in the player.')
+      $.ui.toast("This background session can't draw pictures: see the warning in the chat.")
       $.ui.invalidate('ui.render')
     }
   }, () => undefined)
@@ -784,18 +786,22 @@ function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media
 // Shown while pictures are drawn as cells: why, and the way back to full quality.
 export const resumeCommand = (id: string) => (id ? `claude --resume ${id}` : 'claude --resume')
 
-function LowResNote(ui: Ui, $: EngineInterface, width: number) {
+// The whole window, while pictures can't draw here: a warning with the way
+// back to full quality, and the blocky preview only if asked for.
+function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: number) {
   const { Box, Text, Button } = ui
-  if (canImage) return null
   const command = resumeCommand(sessionId)
 
   return (
-    <Box flexDirection="column" width={width} marginBottom={1}>
-      <Text color="warning" wrap="wrap">
-        ⚠ Low-res preview. This is a background session, which can't show real pictures. For full quality, open a new Ghostty tab and resume this chat there:
+    <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
+      <Text bold color="warning">⚠ Can't show {shown.frames ? 'videos' : 'pictures'} in a background session</Text>
+      <Text wrap="wrap">
+        {'\n'}"{shown.title}" is ready, but this chat is running as a background session, and those can't draw pictures in the terminal. Resume this chat in a normal Ghostty tab to see it at full quality:
       </Text>
-      <Box flexDirection="row" gap={2}>
+      <Box flexDirection="row" gap={2} marginTop={1}>
         <Text bold>{command}</Text>
+      </Box>
+      <Box flexDirection="row" gap={2} marginTop={1}>
         <Button
           key="copy-resume"
           variant="primary"
@@ -805,6 +811,16 @@ function LowResNote(ui: Ui, $: EngineInterface, width: number) {
               $.ui.toast(r.isCopied ? 'Copied. Paste it in a new Ghostty tab.' : 'Could not copy'),
             )
           }
+        />
+        <Button
+          key="lowres"
+          plain
+          dimColor
+          label="Show low-res preview anyway"
+          onPress={() => {
+            wantsLowRes.add(site)
+            $.ui.invalidate('ui.render')
+          }}
         />
       </Box>
     </Box>
@@ -852,6 +868,11 @@ async function Viewer(
   }
 
   // The single view with the QA sidebar is the default; side by side is a click away.
+  if (!canImage && !wantsLowRes.has(site)) {
+    one.timer?.cancel()
+    one.timer = undefined
+    return Warning(ui, $, site, shown, columns - 8)
+  }
   one.box = { columns: box.columns, rows: box.rows }
   const pic = await picFor($, fileAt(media, one.frame, site), box)
   probe($, site, 'view', pic)
@@ -928,8 +949,7 @@ async function Viewer(
           {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
         </Box>
       )}
-      <Box marginTop={1}>{LowResNote(ui, $, box.columns + (isWide ? SIDE + 3 : 0))}</Box>
-      <Box flexDirection="row" gap={3}>
+      <Box flexDirection="row" gap={3} marginTop={1}>
         {stage}
         {isWide && Report(ui, $, site, shown, prLink)}
       </Box>
@@ -996,8 +1016,7 @@ async function SplitView(
         </Box>
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
-      <Box marginTop={1}>{LowResNote(ui, $, width)}</Box>
-      <Box flexDirection="row" gap={2}>
+      <Box flexDirection="row" gap={2} marginTop={1}>
         {side(before, 'view-a', picA, 'Before')}
         {side(shown, 'view-b', picB, 'After')}
       </Box>
