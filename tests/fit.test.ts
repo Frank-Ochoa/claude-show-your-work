@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -168,4 +168,20 @@ test('windows from before the rename still parse', () => {
 test('changes list in clip order, untimed ones last', () => {
   const out = inClipOrder([{ title: 'focus', at: 14 }, { title: 'note' }, { title: 'hover', at: 9 }, { title: 'cards', at: 7 }])
   expect(out.map(c => c.title)).toEqual(['cards', 'hover', 'focus', 'note'])
+})
+
+test('wrapping never hangs on a tiny width', () => {
+  expect(wrapWords('Stats moved inside', 0).length).toBeGreaterThan(0)
+  expect(wrapWords('Stats moved inside', -7).join('')).toBe('Statsmovedinside')
+})
+
+test('a change lights when a seek lands just before it', () => {
+  const changes = [{ title: 'a', at: 0.5 }, { title: 'b', at: 1.04 }]
+  expect(liveChange(changes, 12 / 12, 12)).toBe(1)
+  expect(liveChange(changes, 0.2, 12)).toBe(-1)
+})
+
+test('checks without a time never claim 0:00', () => {
+  const shown = { path: '/a', width: 1, height: 1, title: 'a', generation: 1, checks: [{ name: 'x', ok: true }], compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'x', ok: false }] } }
+  expect(changeAt(shown, 5)).toBe(null)
 })

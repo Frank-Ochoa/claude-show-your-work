@@ -40,6 +40,8 @@ type Player = {
   segments?: number
   // which page of key changes the sidebar shows
   changesPage?: number
+  // where the updated video was, kept while a still original is shown
+  updatedFrame?: number
   // the picture's size in cells as last drawn, for repaints
   box?: { columns: number; rows: number }
 }
@@ -103,8 +105,10 @@ async function pngSize($: EngineInterface, png: string) {
 // Cuts a clip into PNG frames the terminal can swap through.
 async function prepareVideo($: EngineInterface, real: string, title: string): Promise<Shown> {
   const probe = await $.process.run([ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', real])
-  const duration = Number(probe.stdout.trim()) || 1
-  const fps = sampleRate(duration)
+  // Some recordings (MediaRecorder webm) carry no duration: sample those at the
+  // top rate. The clip's length is then what the frames cover.
+  const probed = Number(probe.stdout.trim())
+  const fps = sampleRate(Number.isFinite(probed) && probed > 0 ? probed : 1)
   generation += 1
   const dir = `${TMP}/v${generation}-${Math.floor(await $.clock.now())}`
   await $.process.run(['mkdir', '-p', dir])
@@ -116,10 +120,29 @@ async function prepareVideo($: EngineInterface, real: string, title: string): Pr
   if (cut.exitCode !== 0) throw new Error(`ffmpeg could not read ${real}: ${cut.stderr.trim().slice(0, 200)}`)
   const count = (await $.fs.list(dir)).filter(f => f.name.endsWith('.png')).length
   if (!count) throw new Error(`no frames in ${real}`)
-  const frames = { dir, count, fps, duration }
+  const frames = { dir, count, fps, duration: count / fps }
   const poster = frameFile(frames, 0)
 
   return { kind: 'video', path: poster, source: real, ...(await pngSize($, poster)), title, generation, frames }
+}
+
+// A window from days ago whose frames were cleaned up cuts them again, once.
+const recut = new Map<string, Promise<unknown>>()
+function ensureFrames($: EngineInterface, media: Shown): Promise<unknown> {
+  const f = media.frames
+  if (!f || !media.source) return Promise.resolve()
+  let job = recut.get(f.dir)
+  if (!job) {
+    job = $.fs.stat(frameFile(f, 0)).catch(async () => {
+      await $.process.run(['mkdir', '-p', f.dir])
+      await $.process.run([
+        ffmpeg, '-v', 'error', '-i', media.source!, '-vf', `fps=${f.fps},scale='min(960,iw)':-2`,
+        '-frames:v', String(f.count), '-compression_level', '1', `${f.dir}/f%05d.png`,
+      ])
+    }).catch(() => undefined)
+    recut.set(f.dir, job)
+  }
+  return job
 }
 
 // Moments both runs share (a check by the same name), as [updated, original]
@@ -350,7 +373,7 @@ export function checkDiff(now: Check[] = [], before: Check[] = []) {
 // The play control's word for where the clip is.
 export function playWord(isPlaying: boolean, frame: number, count: number) {
   if (isPlaying) return '❚❚ Pause'
-  if (frame >= count - 1) return '↺ Replay'
+  if (count > 1 && frame >= count - 1) return '↺ Replay'
 
   return frame > 0 ? '▶ Resume' : '▶ Play'
 }
@@ -362,26 +385,22 @@ const plainAt = (media: Shown, frame: number) =>
   media.frames ? frameFile(media.frames, Math.min(frame, media.frames.count - 1)) : media.path
 
 
+// The same moment on the other clip: updated → original seconds, and back.
+const toOriginal = (shown: Shown, t: number) =>
+  shown.frames && shown.compare?.frames
+    ? mapTime(shown.sync ?? anchors(shown.checks, shown.compare.checks), t, shown.frames.duration, shown.compare.frames.duration)
+    : t
+const toUpdated = (shown: Shown, t: number) =>
+  shown.frames && shown.compare?.frames
+    ? mapTime((shown.sync ?? anchors(shown.checks, shown.compare.checks)).map(([a, b]) => [b, a] as [number, number]), t, shown.compare.frames.duration, shown.frames.duration)
+    : t
+
 // The compared side's frame at the moment the shown side is at.
 const compareFrame = (shown: Shown, frame: number) => {
   const a = shown.frames, b = shown.compare?.frames
   if (!a || !b) return 0
   const t = mapTime(shown.sync ?? anchors(shown.checks, shown.compare?.checks), frame / a.fps, a.duration, b.duration)
   return Math.max(0, Math.min(b.count - 1, Math.round(t * b.fps)))
-}
-
-// Pictures go to the terminal as PNG bytes, not file paths: a background
-// session's terminal cannot open files on this machine, bytes always reach it.
-const bytes = new Map<string, Promise<string>>()
-const sizes = new Map<string, number>()
-// Frames held for smooth playback, at most this many bytes of base64.
-const KEEP_BYTES = 24 * 1024 * 1024
-let held = 0
-
-function forget(file: string) {
-  held -= sizes.get(file) ?? 0
-  sizes.delete(file)
-  bytes.delete(file)
 }
 
 type Source = { png: string } | { file: string; format: 'png' }
@@ -391,28 +410,6 @@ type Source = { png: string } | { file: string; format: 'png' }
 // bytes (b6b8b14) moved ~400 KB a frame and froze playback.
 export function pngSource(_$: EngineInterface, file: string): Promise<Source> {
   return Promise.resolve({ file, format: 'png' as const })
-}
-
-function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
-  let hit = bytes.get(file)
-  if (!hit) {
-    hit = $.fs.read(file, { as: 'bytes' }).then(r => {
-      const b64 = (r as { base64: string }).base64
-      sizes.set(file, b64.length)
-      held += b64.length
-      // Oldest first: the frames played longest ago leave.
-      while (held > KEEP_BYTES && bytes.size > 1) forget(bytes.keys().next().value!)
-      return b64
-    })
-    bytes.set(file, hit)
-    hit.catch(() => forget(file))
-  } else {
-    // Recently used: move to the back of the line.
-    bytes.delete(file)
-    bytes.set(file, hit)
-  }
-
-  return hit.then(png => ({ png }))
 }
 
 // Whether the terminal draws pictures. Some sessions cannot (a background
@@ -445,18 +442,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
   }, () => undefined)
 }
 
-// Reads the next few frames ahead so playback never waits on a read.
-function prefetch($: EngineInterface, media: Shown, frame: number, box?: { columns: number; rows: number }) {
-  if (!media.frames) return
-  for (let i = 1; i <= 4; i++) {
-    if (frame + i >= media.frames.count) break
-    void plainAt(media, frame + i)
-  }
-}
-
 async function blit($: EngineInterface, site: string, key: string, media: Shown, file: string, frame: number) {
-  const box = player(site).box
-  prefetch($, media, frame, box)
   if (canImage) await $.ui.blit({ requestId: site, key, source: await pngSource($, file) })
 }
 
@@ -486,7 +472,7 @@ export function resultWords(checks: Check[] = []): string {
 // The latest check up to a moment whose result differs between the sides.
 export function changeAt(shown: Shown, seconds: number): { check: Check; was: boolean } | null {
   const before = new Map((shown.compare?.checks ?? []).map(c => [c.name, c.ok]))
-  const differing = (shown.checks ?? []).filter(c => before.has(c.name) && before.get(c.name) !== c.ok && (c.at ?? 0) <= seconds)
+  const differing = (shown.checks ?? []).filter(c => c.at !== undefined && before.has(c.name) && before.get(c.name) !== c.ok && c.at <= seconds)
   const last = differing.at(-1)
 
   return last ? { check: last, was: before.get(last.name)! } : null
@@ -511,10 +497,19 @@ function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
       versions.set(other, (versions.get(other) ?? 0) + 1)
     }
   }
-  if (one.frame >= frames.count - 1) one.frame = 0
-  // The picture swaps every frame; the bar and the time redraw once a second.
-  // A redraw repaints every player window in the chat, so it stays rare.
-  const marks = () => String(Math.floor(one.frame / frames.fps))
+  if (one.frame >= frames.count - 1) {
+    one.frame = 0
+    draw($, site, media, shown)
+  }
+  // The picture swaps every frame; the bar and the time redraw once a second,
+  // or when the change on screen moves on. A redraw repaints every player
+  // window in the chat, so it stays rare.
+  const timed = inClipOrder(shown?.changes ?? [])
+  const isOriginal = !!shown && media !== shown
+  const marks = () => {
+    const t = one.frame / frames.fps
+    return `${Math.floor(t)}|${liveChange(timed, shown && isOriginal ? toUpdated(shown, t) : t, frames.fps)}`
+  }
   let last = marks()
   one.timer = $.clock.every(Math.round(1000 / frames.fps), () => {
     if (one.frame >= frames.count - 1) return stop($, site)
@@ -550,14 +545,16 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
   one.isCompare = toCompare
   const to = sideOf(shown, site)
   // Same moment on the other side, lined up on the steps both runs share.
-  if (toCompare) one.frame = compareFrame(shown, one.frame)
-  else if (from.frames && to.frames) {
-    const back = (shown.sync ?? anchors(shown.checks, shown.compare.checks)).map(([a, b]) => [b, a] as [number, number])
-    const t = mapTime(back, one.frame / from.frames.fps, from.frames.duration, to.frames.duration)
+  // Beside a still picture there's no moment to match: keep the video's place.
+  if (toCompare) {
+    one.updatedFrame = one.frame
+    one.frame = compareFrame(shown, one.frame)
+  } else if (from.frames && to.frames) {
+    const t = toUpdated(shown, one.frame / from.frames.fps)
     one.frame = Math.max(0, Math.min(to.frames.count - 1, Math.round(t * to.frames.fps)))
-  }
+  } else one.frame = one.updatedFrame ?? 0
   draw($, site, to)
-  if (wasPlaying && to.frames) play($, site, to)
+  if (wasPlaying && to.frames) play($, site, to, shown)
   redraw($, site)
 }
 
@@ -569,7 +566,8 @@ function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
   const wasPlaying = !!one.timer
   one.timer?.cancel()
   one.timer = undefined
-  if (one.isCompare) one.frame = sameMoment(shown.compare.frames, shown.frames, one.frame)
+  if (one.isCompare && shown.compare.frames && shown.frames)
+    one.frame = Math.max(0, Math.min(shown.frames.count - 1, Math.round(toUpdated(shown, one.frame / shown.compare.frames.fps) * shown.frames.fps)))
   one.isCompare = false
   one.isSplit = on
   if (wasPlaying) play($, site, shown, shown)
@@ -604,7 +602,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   const one = player(site)
   const frames = media.frames!
   const word = playWord(!!one.timer, one.frame, frames.count)
-  const elapsed = clock(one.frame / frames.fps)
+  const elapsed = clock(one.frame >= frames.count - 1 ? frames.duration : one.frame / frames.fps)
   const total = clock(frames.duration)
   const segments = Math.max(6, width - (word.length + 4) - elapsed.length - total.length - 4)
   const playhead = Math.min(segments - 1, Math.round((one.frame / Math.max(1, frames.count - 1)) * (segments - 1)))
@@ -637,7 +635,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
           plain
           dimColor={c.isAhead}
           label={c.label}
-          onPress={() => seek($, site, media, (c.start / Math.max(1, segments - 1)) * frames.duration, shown)}
+          onPress={() => seek($, site, media, (Math.round((c.start / Math.max(1, segments - 1)) * (frames.count - 1)) + 0.5) / frames.fps, shown)}
         />
       ))}
       <Text dimColor> {total}</Text>
@@ -734,6 +732,12 @@ export function changesThatFit(height: number, summaryRows: number, hasPr: boole
   return Math.max(1, height - fixed)
 }
 
+// The change on screen now: the last one whose moment has come, allowing for
+// a seek landing up to half a frame early.
+export function liveChange(changes: KeyChange[], now: number, fps: number): number {
+  return changes.reduce((hit, c, i) => (c.at !== undefined && c.at <= now + 0.5 / fps ? i : hit), -1)
+}
+
 // Changes in the order they show in the clip; ones without a time keep
 // their place after the timed ones.
 export function inClipOrder(changes: KeyChange[]): KeyChange[] {
@@ -742,6 +746,7 @@ export function inClipOrder(changes: KeyChange[]): KeyChange[] {
 
 // Words wrapped to lines of at most width, so the whole text is always shown.
 export function wrapWords(text: string, width: number): string[] {
+  width = Math.max(1, Math.floor(width))
   const lines: string[] = []
   let line = ''
   for (const word of text.split(/\s+/).filter(Boolean)) {
@@ -789,7 +794,8 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const column = isTwo ? Math.floor((width - 4 - 3) / 2) : width - 4
   const TITLE = titleWidth(column), LABEL = labelWidth(column)
   const changes = inClipOrder(shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : [])
-  const summary = (shown.summary ?? []).slice(0, 3).map(s => ({ ...s, lines: wrapWords(s.label, LABEL) }))
+  // The summary is the updated side's; on the original, its own checks count.
+  const summary = (media === shown ? shown.summary ?? [] : []).slice(0, 3).map(s => ({ ...s, lines: wrapWords(s.label, LABEL) }))
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
   const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
@@ -797,8 +803,10 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
   const pages = pagesOf(wrapped.map((w, i) => ({ item: w, rows: w.lines.length + (i ? 1 : 0) })), room)
   const page = Math.min(one.changesPage ?? 0, pages.length - 1)
-  const now = media.frames ? one.frame / media.frames.fps : -1
-  const live = changes.reduce((hit, c, i) => (c.at !== undefined && c.at <= now ? i : hit), -1)
+  // Changes are timed on the updated clip; on the original, map the clock.
+  const onOriginal = media !== shown
+  const now = media.frames ? (onOriginal ? toUpdated(shown, one.frame / media.frames.fps) : one.frame / media.frames.fps) : -1
+  const live = liveChange(changes, now, media.frames?.fps ?? 12)
   const label = (text: string, right?: Ui) => (
     <Box flexDirection="row" justifyContent="space-between">
       <Text dimColor bold>{text}</Text>
@@ -825,7 +833,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
       )}
       {(pages[page] ?? []).map(({ c, n, lines }, k) => {
         const isLive = n === live
-        const jump = () => c.at !== undefined && seek($, site, media, c.at, shown)
+        const jump = () => c.at !== undefined && seek($, site, media, onOriginal ? toOriginal(shown, c.at) : c.at, shown)
         return (
           <Box key={`change-${n}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
             <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
@@ -891,10 +899,14 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
     $.ui.toast(r.exitCode === 0 ? note : `Could not: ${r.stderr.trim().slice(0, 120)}`)
   const name = source.split('/').pop()!
   const keep = async () => {
-    const out = `${home}/Downloads/${name}`
-    const r = await $.process.run(['cp', '-n', source, out])
+    // A free name: "clip.mp4", then "clip 2.mp4", "clip 3.mp4"…
+    const dot = name.lastIndexOf('.')
+    const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, '']
+    let out = `${home}/Downloads/${name}`
+    for (let n = 2; await $.fs.stat(out).then(() => true, () => false); n++) out = `${home}/Downloads/${stem} ${n}${ext}`
+    const r = await $.process.run(['cp', source, out])
     if (r.exitCode === 0) await $.process.run(['open', '-R', out])
-    done(r, `Saved to Downloads/${name}`)
+    done(r, `Saved to Downloads/${out.split('/').pop()}`)
   }
 
   return (
@@ -982,8 +994,10 @@ async function Viewer(
   const hasReport = !!(shown.change || shown.changes?.length || shown.summary?.length || shown.checks?.length)
   const isWide = hasReport && columns - 8 >= WIDE_ENOUGH
   const room = columns - (isPane ? 6 : 10) - (isWide ? SIDE + 3 : 0)
-  const box = sizeFor(shown.width, shown.height, room, viewport?.rows ?? 40, isPane)
+  const box = sizeFor(media.width, media.height, room, viewport?.rows ?? 40, isPane)
   const isNarrow = box.columns < 60
+  // Under the player the report takes at least a readable width, even beside a tall, thin picture.
+  const below = hasReport && !isWide ? Math.max(box.columns, Math.min(columns - (isPane ? 6 : 10), 72)) : box.columns
   const checks = media.checks ?? []
   const passed = checks.filter(c => c.ok).length
   const prNumber = shown.pr?.match(/\/pull\/(\d+)/)?.[1]
@@ -1009,6 +1023,7 @@ async function Viewer(
     return Warning(ui, $, site, shown, columns - 8)
   }
   one.box = { columns: box.columns, rows: box.rows }
+  await ensureFrames($, media)
   const pic = await picFor($, plainAt(media, one.frame), box)
   probe($, site, 'view', pic)
   if (one.isSplit && shown.pair && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
@@ -1048,7 +1063,7 @@ async function Viewer(
   )
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={box.columns + (isWide ? SIDE + 3 : 0) + 4}>
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? box.columns + SIDE + 3 : Math.max(box.columns, below)) + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" gap={2} flexShrink={1}>
           <Text bold wrap="truncate-end">{shown.title}</Text>
@@ -1070,7 +1085,7 @@ async function Viewer(
         {stage}
         {isWide && Report(ui, $, site, shown, prLink, { width: SIDE, height: box.rows + (frames ? 3 : 2) })}
       </Box>
-      {!isWide && hasReport && <Box marginTop={1}>{Report(ui, $, site, shown, prLink, { width: box.columns })}</Box>}
+      {!isWide && hasReport && <Box marginTop={1}>{Report(ui, $, site, shown, prLink, { width: below })}</Box>}
     </Box>
   )
 }
@@ -1219,15 +1234,15 @@ export const register: Register = on => {
     const started = await next(e)
     cwd = started.cwd
     sessionId = await $.session.id().catch(() => '')
-    const env = await $.process.run(['sh', '-lc', 'printf "%s\\n" "$HOME"; command -v ffmpeg; command -v ffprobe'])
-    const [h, ff, fp] = env.stdout.split('\n')
-    home = h ?? ''
+    const env = await $.process.run(['sh', '-lc', 'echo "home=$HOME"; echo "ff=$(command -v ffmpeg)"; echo "fp=$(command -v ffprobe)"'])
+    const got = (key: string) => env.stdout.split('\n').find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? ''
+    const ff = got('ff'), fp = got('fp')
+    home = got('home')
     ffmpeg = ff || '/opt/homebrew/bin/ffmpeg'
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
-    // Frames are ~0.3 MB each: keep only the newest few clips' worth.
-    void $.process.run(['sh', '-c', `ls -dt ${TMP}/v* 2>/dev/null | tail -n +7 | xargs rm -rf`])
-    // Converted pictures older than two days go too.
-    void $.process.run(['sh', '-c', `find ${TMP} -maxdepth 2 -type f -mtime +2 -delete 2>/dev/null; true`])
+    // Frames and converted pictures a week old go; a window that scrolls back
+    // into view cuts its frames again from the source.
+    void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} + 2>/dev/null; true`])
     await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',
@@ -1240,7 +1255,7 @@ export const register: Register = on => {
         "Use it unasked whenever you've made visual work the user should see: a rendered page or slide, a chart, a mockup. " +
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
-        'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. ' +
+        'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1253,7 +1268,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, each with `at` = the second it shows in the clip), ' +
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
-        '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. ' +
+        '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
