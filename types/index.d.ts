@@ -3,9 +3,9 @@ export type Frames = { dir: string; count: number; fps: number; duration: number
 // One QA check: its name, whether it passed, and when it happens in a clip.
 export type Check = { name: string; ok: boolean; at?: number }
 
-// How a click on the picture itself is caught: a grid of blank buttons over
-// the whole picture, one button in its centre, or none.
-export type Overlay = 'grid' | 'center' | 'none'
+// A play button over the centre of a paused video, or none. (A grid of
+// buttons over the whole picture was tried: it erases the picture.)
+export type Overlay = 'center' | 'none'
 
 export type Shown = {
   kind?: 'image' | 'video'

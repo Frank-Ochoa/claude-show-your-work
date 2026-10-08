@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changeAt, checkDiff, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { changeAt, checkDiff, isScratch, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -81,4 +81,11 @@ test('side by side names the latest change up to the moment shown', () => {
   expect(changeAt(shown, 9)?.check.name).toBe('BID')
   expect(changeAt(shown, 12)?.check.name).toBe('Zurich')
   expect(changeAt(shown, 12)?.was).toBe(false)
+})
+
+test('temp files are scratch, finished work is not', () => {
+  expect(isScratch('/tmp/claude-image-view/a.png')).toBe(true)
+  expect(isScratch('/private/tmp/claude-501/x/qa.webm')).toBe(true)
+  expect(isScratch('/var/folders/rq/x/T/shot.png')).toBe(true)
+  expect(isScratch('/Users/u/Movies/launch.mp4')).toBe(false)
 })

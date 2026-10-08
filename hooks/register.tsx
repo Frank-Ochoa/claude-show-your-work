@@ -289,13 +289,6 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
         rows={box.rows}
         alt={`[${media.kind ?? 'image'}: ${shown.title} — this terminal cannot draw images]`}
       />
-      {frames && overlay === 'grid' && (
-        <Box position="absolute" top={0} left={0} flexDirection="column">
-          {Array.from({ length: box.rows }, (_, r) => (
-            <Button key={`hit-${r}`} plain label={' '.repeat(box.columns)} onPress={() => toggle($, site, media)} />
-          ))}
-        </Box>
-      )}
       {frames && overlay === 'center' && !one.timer && (
         <Box position="absolute" top={Math.floor(box.rows / 2)} left={Math.max(0, Math.floor((box.columns - centre.length - 4) / 2))}>
           <Button key="centre" variant="primary" label={centre} onPress={() => play($, site, media)} />
@@ -408,6 +401,52 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   )
 }
 
+// Scratch output lives in temp folders; finished work lives somewhere real.
+export const isScratch = (path: string) => /^\/(private\/)?(tmp|var\/folders)\//.test(path)
+
+// What you do with the file: watch it properly, keep it (or find it), or
+// paste its path elsewhere.
+function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNarrow: boolean) {
+  const { Box, Button } = ui
+  const done = (r: { exitCode: number; stderr: string }, note: string) =>
+    $.ui.toast(r.exitCode === 0 ? note : `Could not: ${r.stderr.trim().slice(0, 120)}`)
+  const name = source.split('/').pop()!
+  const keep = async () => {
+    const out = `${home}/Downloads/${name}`
+    const r = await $.process.run(['cp', '-n', source, out])
+    if (r.exitCode === 0) await $.process.run(['open', '-R', out])
+    done(r, `Saved to Downloads/${name}`)
+  }
+
+  return (
+    <Box flexDirection="row" gap={2}>
+      <Button
+        key="open"
+        plain
+        dimColor
+        label={media.frames ? 'Open full quality' : 'Open full size'}
+        onPress={() => void $.process.run(['open', source]).then(r => done(r, `Opened ${name}`))}
+      />
+      {isScratch(source) ? (
+        <Button key="keep" plain dimColor label="Save to Downloads" onPress={() => void keep()} />
+      ) : (
+        <Button key="reveal" plain dimColor label="Show in Finder" onPress={() => void $.process.run(['open', '-R', source]).then(r => done(r, 'Shown in Finder'))} />
+      )}
+      {!isNarrow && (
+        <Button
+          key="copy"
+          plain
+          dimColor
+          label="Copy path"
+          onPress={(press: { surface: 'terminal' }) =>
+            void $.ui.copy({ text: source, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Path copied' : 'Could not copy the path'))
+          }
+        />
+      )}
+    </Box>
+  )
+}
+
 // The player: concept A (picture, scrub row, controls) everywhere; concept B
 // (A plus the QA report at its side) when there is a report and room for it.
 function Viewer(
@@ -427,7 +466,7 @@ function Viewer(
   const columns = viewport?.columns ?? 100
   const hasReport = !!(shown.change || shown.checks?.length)
   const isWide = hasReport && columns - 8 >= WIDE_ENOUGH
-  const room = columns - (isPane ? 6 : 8) - (isWide ? SIDE + 3 : 0)
+  const room = columns - (isPane ? 6 : 10) - (isWide ? SIDE + 3 : 0)
   const box = sizeFor(shown.width, shown.height, room, viewport?.rows ?? 40, isPane)
   const isNarrow = box.columns < 60
   const checks = media.checks ?? []
@@ -445,45 +484,14 @@ function Viewer(
   // A video the agent shows starts playing by itself, once.
   if (frames && !isPane && !one.hasAutoplayed) {
     one.hasAutoplayed = true
-    void $.clock.sleep(400).then(() => play($, site, media, shown))
+    void $.clock.sleep(400).then(() => play($, site, media, shown), () => undefined)
   }
 
   // With a before recording, open side by side: the change is the point.
   if (one.isSplit === undefined && shown.compare?.frames && frames) one.isSplit = true
   if (one.isSplit && shown.compare && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
 
-  const actions = (
-    <Box flexDirection="row" gap={2}>
-      <Button key="open" plain dimColor label="Open" onPress={run(['open', source], `Opened ${media.title}`)} />
-      {!isNarrow && <Button key="reveal" plain dimColor label="Reveal" onPress={run(['open', '-R', source], 'Revealed in Finder')} />}
-      {!isNarrow && (
-        <Button
-          key="copy"
-          plain
-          dimColor
-          label="Copy path"
-          onPress={(press: { surface: 'terminal' }) =>
-            void $.ui.copy({ text: source, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Path copied' : 'Could not copy the path'))
-          }
-        />
-      )}
-      {!isPane && (
-        <Button
-          key="full"
-          plain
-          dimColor
-          label="⤢ Full view"
-          onPress={async () => {
-            one.timer?.cancel()
-            one.timer = undefined
-            await update($, current, () => shown)
-            Object.assign(player(PANE), { frame: one.frame, isCompare: one.isCompare, hasAutoplayed: true })
-            await $.ui.open({ id: PANE, title: shown.title })
-          }}
-        />
-      )}
-    </Box>
-  )
+  const actions = Actions(ui, $, media, source, isNarrow)
 
   const stage = (
     <Box flexDirection="column" width={box.columns}>
@@ -506,9 +514,9 @@ function Viewer(
   )
 
   return (
-    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1}>
+    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1} width={box.columns + (isWide ? SIDE + 3 : 0) + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
-        <Box flexDirection="row" gap={2}>
+        <Box flexDirection="row" gap={2} flexShrink={1}>
           <Text bold wrap="truncate-end">{shown.title}</Text>
           {checks.length > 0 && (
             <Text bold color={passed === checks.length ? 'success' : 'error'}>
@@ -547,7 +555,7 @@ function SplitView(
   const { Box, Text, Image, Button } = ui
   const one = player(site)
   const before = shown.compare!
-  const half = Math.floor((columns - (isPane ? 6 : 8) - 2) / 2)
+  const half = Math.floor((columns - (isPane ? 6 : 10) - 2) / 2)
   const box = sizeFor(shown.width, shown.height, half, rows, isPane)
   const width = box.columns * 2 + 2
   const seconds = one.frame / shown.frames!.fps
@@ -570,7 +578,7 @@ function SplitView(
   )
 
   return (
-    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1}>
+    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1} width={width + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2} width={width}>
         <Text bold wrap="truncate-end">{shown.title}</Text>
         <Box flexDirection="row" gap={2}>{prLink}<Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} /></Box>
@@ -595,6 +603,7 @@ function SplitView(
         )}
       </Box>
       {Scrub(ui, $, site, shown, width, shown)}
+      <Box width={width} justifyContent="flex-end">{Actions(ui, $, shown, shown.source ?? shown.path, width < 60)}</Box>
       {(fixed.length > 0 || broken.length > 0) && (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>{fixed.length} fixed · {broken.length} broke · click one to jump there</Text>
@@ -629,8 +638,8 @@ const TOOL_INPUT = {
     compare_label: { type: 'string', description: 'Name of the compared side (default "Before")' },
     overlay: {
       type: 'string',
-      enum: ['center', 'grid', 'none'],
-      description: 'How a click on a video picture plays it: a centre button (default), a click anywhere (experimental), or none',
+      enum: ['center', 'none'],
+      description: 'A centre play button over a paused video (default), or none',
     },
   },
   required: ['path'],
