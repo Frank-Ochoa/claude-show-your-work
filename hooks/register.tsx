@@ -264,6 +264,7 @@ function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
 // drawn as coloured half-block cells, which any terminal shows.
 let canImage = true
 let probed = false
+let sessionId = ''
 
 const raster = new Map<string, Promise<string>>()
 const rasterSizes = new Map<string, number>()
@@ -347,6 +348,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
     const r = await $.ui.blit({ requestId: site, key, source: pic.src })
     if (r.deny && /alt/i.test(r.deny)) {
       canImage = false
+      $.ui.toast('Pictures are low-res here: this is a background session. See the note in the player.')
       $.ui.invalidate('ui.render')
     }
   }, () => undefined)
@@ -779,6 +781,36 @@ function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media
   )
 }
 
+// Shown while pictures are drawn as cells: why, and the way back to full quality.
+export const resumeCommand = (id: string) => (id ? `claude --resume ${id}` : 'claude --resume')
+
+function LowResNote(ui: Ui, $: EngineInterface, width: number) {
+  const { Box, Text, Button } = ui
+  if (canImage) return null
+  const command = resumeCommand(sessionId)
+
+  return (
+    <Box flexDirection="column" width={width} marginBottom={1}>
+      <Text color="warning" wrap="wrap">
+        ⚠ Low-res preview. This is a background session, which can't show real pictures. For full quality, open a new Ghostty tab and resume this chat there:
+      </Text>
+      <Box flexDirection="row" gap={2}>
+        <Text bold>{command}</Text>
+        <Button
+          key="copy-resume"
+          variant="primary"
+          label="Copy command"
+          onPress={(press: { surface: 'terminal' }) =>
+            void $.ui.copy({ text: command, surface: press.surface }).then(r =>
+              $.ui.toast(r.isCopied ? 'Copied. Paste it in a new Ghostty tab.' : 'Could not copy'),
+            )
+          }
+        />
+      </Box>
+    </Box>
+  )
+}
+
 // The player: concept A (picture, scrub row, controls) everywhere; concept B
 // (A plus the QA report at its side) when there is a report and room for it.
 async function Viewer(
@@ -896,7 +928,8 @@ async function Viewer(
           {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
         </Box>
       )}
-      <Box flexDirection="row" gap={3} marginTop={1}>
+      <Box marginTop={1}>{LowResNote(ui, $, box.columns + (isWide ? SIDE + 3 : 0))}</Box>
+      <Box flexDirection="row" gap={3}>
         {stage}
         {isWide && Report(ui, $, site, shown, prLink)}
       </Box>
@@ -963,7 +996,8 @@ async function SplitView(
         </Box>
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
-      <Box flexDirection="row" gap={2} marginTop={1}>
+      <Box marginTop={1}>{LowResNote(ui, $, width)}</Box>
+      <Box flexDirection="row" gap={2}>
         {side(before, 'view-a', picA, 'Before')}
         {side(shown, 'view-b', picB, 'After')}
       </Box>
@@ -1042,6 +1076,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     cwd = started.cwd
+    sessionId = await $.session.id().catch(() => '')
     const env = await $.process.run(['sh', '-lc', 'printf "%s\\n" "$HOME"; command -v ffmpeg; command -v ffprobe'])
     const [h, ff, fp] = env.stdout.split('\n')
     home = h ?? ''
