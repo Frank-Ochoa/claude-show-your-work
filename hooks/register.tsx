@@ -260,91 +260,24 @@ function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
 }
 
 // Whether the terminal draws pictures. Some sessions cannot (a background
-// session's relay): the first blit says so, and from then on pictures are
-// drawn as coloured half-block cells, which any terminal shows.
+// session's relay): the first blit says so, and from then on every player
+// shows a warning with the way back instead. (Coloured half-block cells were
+// tried as a fallback: unreadable.)
 let canImage = true
 let probed = false
 let sessionId = ''
-// Sites where the person chose the low-res cells over the warning.
-const wantsLowRes = new Set<string>()
 
-const raster = new Map<string, Promise<string>>()
-const rasterSizes = new Map<string, number>()
-let rasterHeld = 0
-const RASTER_BYTES = 16 * 1024 * 1024
+// What draws a picture: the Image's source.
+type Pic = { src: Source }
 
-const hashOf = (text: string) => {
-  let h = 5381
-  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
-}
-
-// Turns rows of RGB pixels (2 per cell, top and bottom) into Raster cells:
-// '▀' in the top pixel's colour over the bottom pixel's.
-export function cellsFrom(rgb: Uint8Array, columns: number, rows: number): string {
-  const words = new Uint32Array(columns * rows * 3)
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < columns; x++) {
-      const top = ((y * 2) * columns + x) * 3
-      const bottom = ((y * 2 + 1) * columns + x) * 3
-      const at = (y * columns + x) * 3
-      words[at] = 0x2580
-      words[at + 1] = ((rgb[top] ?? 0) << 16) | ((rgb[top + 1] ?? 0) << 8) | (rgb[top + 2] ?? 0)
-      words[at + 2] = ((rgb[bottom] ?? 0) << 16) | ((rgb[bottom + 1] ?? 0) << 8) | (rgb[bottom + 2] ?? 0)
-    }
-  }
-
-  return (new Uint8Array(words.buffer) as unknown as { toBase64: () => string }).toBase64()
-}
-
-export function rasterCells($: EngineInterface, file: string, columns: number, rows: number): Promise<string> {
-  const key = `${file}@${columns}x${rows}`
-  let hit = raster.get(key)
-  if (hit) {
-    raster.delete(key)
-    raster.set(key, hit)
-    return hit
-  }
-  hit = (async () => {
-    const out = `${TMP}/raster/${hashOf(key)}.rgb`
-    await $.process.run(['mkdir', '-p', `${TMP}/raster`])
-    const made = await $.process.run([
-      ffmpeg, '-v', 'error', '-y', '-i', file,
-      '-vf', `scale=${columns}:${rows * 2}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', out,
-    ])
-    if (made.exitCode !== 0) throw new Error(made.stderr.trim())
-    const { base64 } = (await $.fs.read(out, { as: 'bytes' })) as { base64: string }
-    const rgb = (Uint8Array as unknown as { fromBase64: (b: string) => Uint8Array }).fromBase64(base64)
-    const cells = cellsFrom(rgb, columns, rows)
-    rasterSizes.set(key, cells.length)
-    rasterHeld += cells.length
-    while (rasterHeld > RASTER_BYTES && raster.size > 1) {
-      const old = raster.keys().next().value!
-      rasterHeld -= rasterSizes.get(old) ?? 0
-      rasterSizes.delete(old)
-      raster.delete(old)
-    }
-    return cells
-  })()
-  raster.set(key, hit)
-  hit.catch(() => raster.delete(key))
-
-  return hit
-}
-
-// What draws a picture: the Image's source, or a Raster's cells.
-type Pic = { src: Source } | { cells: string }
-
-async function picFor($: EngineInterface, file: string, box: { columns: number; rows: number }): Promise<Pic> {
-  if (canImage) return { src: await pngSource($, file) }
-
-  return { cells: await rasterCells($, file, box.columns, box.rows) }
+async function picFor($: EngineInterface, file: string, _box: { columns: number; rows: number }): Promise<Pic> {
+  return { src: await pngSource($, file) }
 }
 
 // After a first draw, asks whether the picture really drew; if the terminal
 // can only show the alt text, switches every picture to cells.
 function probe($: EngineInterface, site: string, key: string, pic: Pic) {
-  if (!canImage || probed || !('src' in pic)) return
+  if (!canImage || probed) return
   probed = true
   void $.clock.sleep(250).then(async () => {
     const r = await $.ui.blit({ requestId: site, key, source: pic.src })
@@ -363,18 +296,13 @@ function prefetch($: EngineInterface, media: Shown, frame: number, box?: { colum
     if (frame + i >= media.frames.count) break
     const next = plainAt(media, frame + i)
     if (canImage) void pngBytes($, next).catch(() => undefined)
-    else if (box) void rasterCells($, next, box.columns, box.rows).catch(() => undefined)
   }
 }
 
 async function blit($: EngineInterface, site: string, key: string, media: Shown, file: string, frame: number) {
   const box = player(site).box
   prefetch($, media, frame, box)
-  if (canImage) {
-    await $.ui.blit({ requestId: site, key, source: await pngSource($, file) })
-  } else if (box) {
-    await $.ui.blit({ requestId: site, key, cells: await rasterCells($, file, box.columns, box.rows) })
-  }
+  if (canImage) await $.ui.blit({ requestId: site, key, source: await pngSource($, file) })
 }
 
 function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
@@ -466,27 +394,23 @@ type Box = { columns: number; rows: number }
 
 // The picture, with whatever catches a click on it laid over it.
 function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, box: Box, pic: Pic) {
-  const { Box, Text, Image, Button, Raster } = ui
+  const { Box, Text, Image, Button } = ui
   const one = player(site)
   const frames = media.frames
   const overlay: Overlay = shown.overlay ?? 'center'
   const word = frames ? playWord(!!one.timer, one.frame, frames.count) : ''
   const centre = `${word}`
-  if (!Image && !Raster) return <Text dimColor>This surface cannot draw images.</Text>
+  if (!Image) return <Text dimColor>This surface cannot draw images.</Text>
 
   return (
     <Box position="relative" width={box.columns} height={box.rows}>
-      {'cells' in pic ? (
-        <Raster key="view" columns={box.columns} rows={box.rows} cells={pic.cells} />
-      ) : (
-        <Image
-          key="view"
-          source={pic.src}
-          columns={box.columns}
-          rows={box.rows}
-          alt={`[${media.kind ?? 'image'}: ${shown.title}]`}
-        />
-      )}
+      <Image
+        key="view"
+        source={pic.src}
+        columns={box.columns}
+        rows={box.rows}
+        alt={`[${media.kind ?? 'image'}: ${shown.title}]`}
+      />
       {frames && overlay === 'center' && !one.timer && (
         <Box position="absolute" top={Math.floor(box.rows / 2)} left={Math.max(0, Math.floor((box.columns - centre.length - 4) / 2))}>
           <Button key="centre" variant="primary" label={centre} onPress={() => play($, site, media)} />
@@ -812,16 +736,6 @@ function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: 
             )
           }
         />
-        <Button
-          key="lowres"
-          plain
-          dimColor
-          label="Show low-res preview anyway"
-          onPress={() => {
-            wantsLowRes.add(site)
-            $.ui.invalidate('ui.render')
-          }}
-        />
       </Box>
     </Box>
   )
@@ -868,7 +782,7 @@ async function Viewer(
   }
 
   // The single view with the QA sidebar is the default; side by side is a click away.
-  if (!canImage && !wantsLowRes.has(site)) {
+  if (!canImage) {
     one.timer?.cancel()
     one.timer = undefined
     return Warning(ui, $, site, shown, columns - 8)
@@ -989,16 +903,11 @@ async function SplitView(
     picFor($, fileAt(shown, one.frame), box),
   ])
   probe($, site, 'view-b', picB)
-  const { Raster } = ui
   const side = (s: Shown, key: string, pic: Pic, fallback: string) => (
     <Box flexDirection="column" width={box.columns}>
       <Text bold>{s.label ?? fallback}{score(s)}</Text>
-      {Image || Raster ? (
-        'cells' in pic ? (
-          <Raster key={key} columns={box.columns} rows={box.rows} cells={pic.cells} />
-        ) : (
-          <Image key={key} source={pic.src} columns={box.columns} rows={box.rows} alt={`[${s.label ?? fallback}]`} />
-        )
+      {Image ? (
+        <Image key={key} source={pic.src} columns={box.columns} rows={box.rows} alt={`[${s.label ?? fallback}]`} />
       ) : (
         <Text dimColor>This surface cannot draw images.</Text>
       )}
