@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changeAt, checkDiff, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { changeAt, checkDiff, resultWords, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -115,4 +115,11 @@ test('notes become a prompt with where, when and the pinned frame', () => {
 test('the resume command names this session', () => {
   expect(resumeCommand('abc-123')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume abc-123')
   expect(resumeCommand('')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume')
+})
+
+test('check results read as words', () => {
+  expect(resultWords([{ name: 'a', ok: true }, { name: 'b', ok: false }, { name: 'c', ok: false }])).toBe('2 checks fail')
+  expect(resultWords([{ name: 'a', ok: false }])).toBe('1 check fails')
+  expect(resultWords([{ name: 'a', ok: true }, { name: 'b', ok: true }])).toBe('all 2 checks pass')
+  expect(resultWords([])).toBe('')
 })

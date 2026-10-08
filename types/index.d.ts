@@ -30,6 +30,10 @@ export type Shown = {
   checks?: Check[]
   // the other side of a before/after, and the two sides' names
   compare?: Shown
+  // Original and Updated merged into one clip, side by side, and its size
+  pair?: Frames
+  pairWidth?: number
+  pairHeight?: number
   label?: string
   overlay?: Overlay
 }

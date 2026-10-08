@@ -109,6 +109,27 @@ async function prepareVideo($: EngineInterface, real: string, title: string): Pr
   return { kind: 'video', path: poster, source: real, ...(await pngSize($, poster)), title, generation, frames }
 }
 
+// Merges the original and updated recordings into one clip, side by side,
+// both on the updated clip's clock, so side by side costs one picture a frame.
+async function preparePair($: EngineInterface, original: Shown, updated: Shown) {
+  const f = updated.frames!
+  generation += 1
+  const dir = `${TMP}/p${generation}-${Math.floor(await $.clock.now())}`
+  await $.process.run(['mkdir', '-p', dir])
+  const side = `fps=${f.fps},scale=-2:360,tpad=stop_mode=clone:stop_duration=30`
+  const made = await $.process.run([
+    ffmpeg, '-v', 'error', '-i', original.source!, '-i', updated.source!,
+    '-filter_complex', `[0:v]${side}[a];[1:v]${side}[b];[a][b]hstack=inputs=2`,
+    '-frames:v', String(f.count), '-compression_level', '1', `${dir}/f%05d.png`,
+  ])
+  if (made.exitCode !== 0) return null
+  const count = (await $.fs.list(dir)).filter(x => x.name.endsWith('.png')).length
+  if (!count) return null
+  const size = await pngSize($, `${dir}/f00001.png`)
+
+  return { pair: { dir, count, fps: f.fps, duration: f.duration }, pairWidth: size.width, pairHeight: size.height }
+}
+
 // Resolves a path to something the terminal can draw: a PNG (other image
 // formats converted with macOS `sips`), or a video's frames.
 async function prepare($: EngineInterface, raw: string, title?: string): Promise<Shown> {
@@ -239,8 +260,10 @@ function forget(file: string) {
 type Source = { png: string } | { file: string; format: 'png' }
 
 // Bytes when the file reads; its path as a last resort.
-export function pngSource($: EngineInterface, file: string): Promise<Source> {
-  return pngBytes($, file).catch(() => ({ file, format: 'png' as const }))
+// The terminal reads the file itself: a path crosses, not the picture. Sending
+// bytes (b6b8b14) moved ~400 KB a frame and froze playback.
+export function pngSource(_$: EngineInterface, file: string): Promise<Source> {
+  return Promise.resolve({ file, format: 'png' as const })
 }
 
 function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
@@ -300,8 +323,7 @@ function prefetch($: EngineInterface, media: Shown, frame: number, box?: { colum
   if (!media.frames) return
   for (let i = 1; i <= 4; i++) {
     if (frame + i >= media.frames.count) break
-    const next = plainAt(media, frame + i)
-    if (canImage) void pngBytes($, next).catch(() => undefined)
+    void plainAt(media, frame + i)
   }
 }
 
@@ -313,6 +335,11 @@ async function blit($: EngineInterface, site: string, key: string, media: Shown,
 
 function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   const one = player(site)
+  if (one.isSplit && shown?.pair) {
+    const at = Math.min(one.frame, shown.pair.count - 1)
+    void blit($, site, 'view-pair', shown, frameFile(shown.pair, at), at).catch(() => undefined)
+    return
+  }
   if (one.isSplit && shown?.compare) {
     const at = compareFrame(shown, one.frame)
     void blit($, site, 'view-a', shown.compare, fileAt(shown.compare, at), at).catch(() => undefined)
@@ -320,6 +347,13 @@ function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
     return
   }
   void blit($, site, 'view', media, fileAt(media, one.frame, site), one.frame).catch(() => undefined)
+}
+
+// A side's checks in words: "4 checks fail" or "all 11 checks pass".
+export function resultWords(checks: Check[] = []): string {
+  const failing = checks.filter(c => !c.ok).length
+  if (!checks.length) return ''
+  return failing ? `${failing} ${failing === 1 ? 'check fails' : 'checks fail'}` : `all ${checks.length} checks pass`
 }
 
 // The latest check up to a moment whose result differs between the sides.
@@ -397,7 +431,7 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
 // side's clock driving both.
 function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
   const one = player(site)
-  if (!shown.compare || !!one.isSplit === on) return
+  if (!shown.compare || (on && !shown.pair) || !!one.isSplit === on) return
   const wasPlaying = !!one.timer
   one.timer?.cancel()
   one.timer = undefined
@@ -475,21 +509,19 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   )
 }
 
-// Live/Preview, Before/After: the side shown is the accent button.
+// Original / Updated: the side shown is the accent button.
 function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const { Box, Button } = ui
   if (!shown.compare) return null
   const isCompare = !!player(site).isCompare
   const name = (s: Shown, fallback: string) => {
-    const label = s.label ?? fallback
-    const passed = s.checks?.filter(c => c.ok).length
-    return s.checks?.length ? `${label} ${passed}/${s.checks.length}` : label
+    return s.label ?? fallback
   }
 
   return (
     <Box flexDirection="row" gap={1}>
-      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={name(shown.compare, 'Before')} onPress={() => flip($, site, shown, true)} />
-      <Button key="side-after" variant={isCompare ? 'secondary' : 'primary'} label={name(shown, 'After')} onPress={() => flip($, site, shown, false)} />
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={name(shown.compare, 'Original')} onPress={() => flip($, site, shown, true)} />
+      <Button key="side-after" variant={isCompare ? 'secondary' : 'primary'} label={name(shown, 'Updated')} onPress={() => flip($, site, shown, false)} />
     </Box>
   )
 }
@@ -536,7 +568,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
         </Text>
       ))}
       {checks.length > 12 && <Text dimColor>+{checks.length - 12} more</Text>}
-      {other && (fixed.length > 0 || broken.length > 0) && <Text dimColor>{'\n'}VS {(other.label ?? 'BEFORE').toUpperCase()}</Text>}
+      {other && (fixed.length > 0 || broken.length > 0) && <Text dimColor>{'\n'}VS {(other.label ?? 'ORIGINAL').toUpperCase()}</Text>}
       {Changes(ui, $, site, shown, fixed, broken)}
       {shown.compare && <Box marginTop={1}>{Tabs(ui, $, site, shown)}</Box>}
       {shown.compare && media.frames && (
@@ -816,7 +848,7 @@ async function Viewer(
   one.box = { columns: box.columns, rows: box.rows }
   const pic = await picFor($, fileAt(media, one.frame, site), box)
   probe($, site, 'view', pic)
-  if (one.isSplit && shown.compare && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
+  if (one.isSplit && shown.pair && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
 
   const actions = Actions(ui, $, media, source, isNarrow)
   const page = urlAt(media, frames ? one.frame / frames.fps : 0)
@@ -912,33 +944,27 @@ async function SplitView(
   const { Box, Text, Image, Button } = ui
   const one = player(site)
   const before = shown.compare!
-  const half = Math.floor((columns - (isPane ? 6 : 10) - 2) / 2)
-  const box = sizeFor(shown.width, shown.height, half, rows, isPane)
-  const width = box.columns * 2 + 2
+  const pair = shown.pair!
+  // One merged clip, Original left and Updated right: one picture per frame.
+  const box = sizeFor(shown.pairWidth ?? shown.width * 2, shown.pairHeight ?? shown.height, columns - (isPane ? 6 : 10), rows, isPane)
+  const width = box.columns
+  const half = Math.floor(width / 2)
   const seconds = one.frame / shown.frames!.fps
   const change = changeAt(shown, seconds)
   const { fixed, broken } = checkDiff(shown.checks, before.checks)
-  const score = (s: Shown) => {
-    const all = s.checks ?? []
-    const passed = all.filter(c => c.ok).length
-    return all.length ? <Text bold color={passed === all.length ? 'success' : 'error'}> {passed}/{all.length}</Text> : null
-  }
   one.box = { columns: box.columns, rows: box.rows }
-  const [picA, picB] = await Promise.all([
-    picFor($, fileAt(before, compareFrame(shown, one.frame)), box),
-    picFor($, fileAt(shown, one.frame), box),
-  ])
-  probe($, site, 'view-b', picB)
-  const side = (s: Shown, key: string, pic: Pic, fallback: string) => (
-    <Box flexDirection="column" width={box.columns}>
-      <Text bold>{s.label ?? fallback}{score(s)}</Text>
-      {Image ? (
-        <Image key={key} source={pic.src} columns={box.columns} rows={box.rows} alt={`[${s.label ?? fallback}]`} />
-      ) : (
-        <Text dimColor>This surface cannot draw images.</Text>
-      )}
-    </Box>
-  )
+  const pic = await picFor($, frameFile(pair, Math.min(one.frame, pair.count - 1)), box)
+  probe($, site, 'view-pair', pic)
+  const head = (s: Shown, fallback: string) => {
+    const words = resultWords(s.checks)
+    const ok = (s.checks ?? []).every(c => c.ok)
+    return (
+      <Box width={half} flexDirection="row" gap={1}>
+        <Text bold>{s.label ?? fallback}</Text>
+        {words && <Text color={ok ? 'success' : 'error'}>· {words}</Text>}
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={width + 4}>
@@ -951,19 +977,24 @@ async function SplitView(
         </Box>
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
-      <Box flexDirection="row" gap={2} marginTop={1}>
-        {side(before, 'view-a', picA, 'Before')}
-        {side(shown, 'view-b', picB, 'After')}
+      <Box flexDirection="row" marginTop={1} width={width}>
+        {head(before, 'Original')}
+        {head(shown, 'Updated')}
       </Box>
+      {Image ? (
+        <Image key="view-pair" source={pic.src} columns={box.columns} rows={box.rows} alt="[original and updated, side by side]" />
+      ) : (
+        <Text dimColor>This surface cannot draw images.</Text>
+      )}
       <Box width={width}>
         {change ? (
           <Text wrap="truncate-end">
             <Text dimColor>{clock(change.check.at ?? 0)} · </Text>
             {change.check.name}
             <Text dimColor> · </Text>
-            <Text color={change.was ? 'success' : 'error'}>{before.label ?? 'Before'} {change.was ? '✓' : '✗'}</Text>
+            <Text color={change.was ? 'success' : 'error'}>{before.label ?? 'Original'} {change.was ? '✓' : '✗'}</Text>
             <Text dimColor> → </Text>
-            <Text color={change.check.ok ? 'success' : 'error'}>{shown.label ?? 'After'} {change.check.ok ? '✓' : '✗'}</Text>
+            <Text color={change.check.ok ? 'success' : 'error'}>{shown.label ?? 'Updated'} {change.check.ok ? '✓' : '✗'}</Text>
           </Text>
         ) : (
           <Text dimColor>Same so far: both sides match up to {clock(seconds)}</Text>
@@ -1013,10 +1044,10 @@ const TOOL_INPUT = {
     pr: { type: 'string', description: 'For QA: the PR URL or number this belongs to' },
     url: { type: 'string', description: 'The page this shows (a localhost or deployed URL): adds an Open page button' },
     checks: CHECKS,
-    compare: { type: 'string', description: 'For QA: absolute path to the before version, image or video; adds Before/After tabs' },
+    compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
-    label: { type: 'string', description: 'Name of this side when comparing (default "After")' },
-    compare_label: { type: 'string', description: 'Name of the compared side (default "Before")' },
+    label: { type: 'string', description: 'Name of this side when comparing (default "Updated")' },
+    compare_label: { type: 'string', description: 'Name of the compared side (default "Original")' },
     overlay: {
       type: 'string',
       enum: ['center', 'none'],
@@ -1121,10 +1152,11 @@ export const register: Register = on => {
       }
       if (input.compare) {
         shown.compare = {
-          ...(await prepare($, input.compare, input.compare_label ?? 'Before')),
+          ...(await prepare($, input.compare, input.compare_label ?? 'Original')),
           label: input.compare_label,
           checks: input.compare_checks,
         }
+        if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})
       }
       const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.width}×${shown.height}`
 
