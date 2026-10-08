@@ -74,12 +74,12 @@ test('the report says which checks were fixed or broke', () => {
 test('side by side names the latest change up to the moment shown', () => {
   const shown = {
     path: '/a', width: 1, height: 1, title: 't', generation: 1,
-    checks: [{ name: 'nav', ok: true, at: 6 }, { name: 'BID', ok: true, at: 8 }, { name: 'Zurich', ok: true, at: 11 }],
-    compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'nav', ok: true }, { name: 'BID', ok: false }, { name: 'Zurich', ok: false }] },
+    checks: [{ name: 'nav', ok: true, at: 6 }, { name: 'hero', ok: true, at: 8 }, { name: 'footer', ok: true, at: 11 }],
+    compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'nav', ok: true }, { name: 'hero', ok: false }, { name: 'footer', ok: false }] },
   }
   expect(changeAt(shown, 5)).toBe(null)
-  expect(changeAt(shown, 9)?.check.name).toBe('BID')
-  expect(changeAt(shown, 12)?.check.name).toBe('Zurich')
+  expect(changeAt(shown, 9)?.check.name).toBe('hero')
+  expect(changeAt(shown, 12)?.check.name).toBe('footer')
   expect(changeAt(shown, 12)?.was).toBe(false)
 })
 
@@ -127,8 +127,8 @@ test('the bar is a few wide buttons that still cover every cell', () => {
 })
 
 test('both runs line up on the steps they share', () => {
-  const updated = [{ name: 'nav', ok: true, at: 6.2 }, { name: 'BID', ok: true, at: 7.9 }, { name: 'end', ok: true, at: 14.6 }]
-  const original = [{ name: 'nav', ok: true, at: 5.9 }, { name: 'BID', ok: false, at: 7.5 }, { name: 'end', ok: true, at: 14.3 }]
+  const updated = [{ name: 'nav', ok: true, at: 6.2 }, { name: 'hero', ok: true, at: 7.9 }, { name: 'end', ok: true, at: 14.6 }]
+  const original = [{ name: 'nav', ok: true, at: 5.9 }, { name: 'hero', ok: false, at: 7.5 }, { name: 'end', ok: true, at: 14.3 }]
   const pts = anchors(updated, original)
   expect(pts.length).toBe(3)
   expect(Math.abs(mapTime(pts, 7.9, 18.9, 18.5) - 7.5) < 0.01).toBe(true)
