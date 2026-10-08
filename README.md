@@ -4,7 +4,7 @@ A Claude Code mod that shows images and plays videos inline in the terminal (Gho
 
 - **show_image / show_video tools**: Claude shows the work it made (rendered pages, screenshots, Playwright recordings) right in the conversation, unasked.
 - **Player window**: autoplay, a labelled Play/Pause/Resume/Replay control, a clickable progress bar, ±5 s seek, Open / Reveal / Copy path / Full view.
-- **QA mode**: pass `change`, `pr`, `checks` and `compare` (the before file) to get a report beside the picture, what was fixed or broke, and synced Before/After tabs.
+- **QA mode**: pass `change`, `pr`, `checks` and `compare` (the before recording of the same flow). Videos open side by side, locked to the same moment, with a live line saying what changed right now and a clickable list of every fix and break. Images get a report beside them and Before/After tabs.
 - **/img <path>**: open any image or video in a side pane.
 
 Videos are cut into frames with ffmpeg (up to 900 frames at up to 12 fps, 960 px wide). Non-PNG images are converted with macOS `sips`.

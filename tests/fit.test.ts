@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { checkDiff, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { changeAt, checkDiff, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -69,4 +69,16 @@ test('the report says which checks were fixed or broke', () => {
   const { fixed, broken } = checkDiff(now, before)
   expect(fixed.map(c => c.name)).toEqual(['a'])
   expect(broken.map(c => c.name)).toEqual(['b'])
+})
+
+test('side by side names the latest change up to the moment shown', () => {
+  const shown = {
+    path: '/a', width: 1, height: 1, title: 't', generation: 1,
+    checks: [{ name: 'nav', ok: true, at: 6 }, { name: 'BID', ok: true, at: 8 }, { name: 'Zurich', ok: true, at: 11 }],
+    compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'nav', ok: true }, { name: 'BID', ok: false }, { name: 'Zurich', ok: false }] },
+  }
+  expect(changeAt(shown, 5)).toBe(null)
+  expect(changeAt(shown, 9)?.check.name).toBe('BID')
+  expect(changeAt(shown, 12)?.check.name).toBe('Zurich')
+  expect(changeAt(shown, 12)?.was).toBe(false)
 })

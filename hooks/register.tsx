@@ -26,7 +26,7 @@ let generation = 0
 let pastedNames: string[] = []
 
 // Playback per drawn site (a transcript row's tool_use_id, or the pane).
-type Player = { frame: number; timer?: Timer; isCompare?: boolean; hasAutoplayed?: boolean }
+type Player = { frame: number; timer?: Timer; isCompare?: boolean; isSplit?: boolean; hasAutoplayed?: boolean }
 const players = new Map<string, Player>()
 const player = (site: string): Player => {
   let one = players.get(site)
@@ -181,8 +181,26 @@ const sideOf = (shown: Shown, site: string): Shown =>
 const fileAt = (media: Shown, frame: number) =>
   media.frames ? frameFile(media.frames, Math.min(frame, media.frames.count - 1)) : media.path
 
-function draw($: EngineInterface, site: string, media: Shown) {
-  void $.ui.blit({ requestId: site, key: 'view', source: { file: fileAt(media, player(site).frame), format: 'png' } })
+// The compared side's frame at the moment the shown side is at.
+const compareFrame = (shown: Shown, frame: number) => sameMoment(shown.frames, shown.compare?.frames, frame)
+
+function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
+  const one = player(site)
+  if (one.isSplit && shown?.compare) {
+    void $.ui.blit({ requestId: site, key: 'view-a', source: { file: fileAt(shown.compare, compareFrame(shown, one.frame)), format: 'png' } })
+    void $.ui.blit({ requestId: site, key: 'view-b', source: { file: fileAt(shown, one.frame), format: 'png' } })
+    return
+  }
+  void $.ui.blit({ requestId: site, key: 'view', source: { file: fileAt(media, one.frame), format: 'png' } })
+}
+
+// The latest check up to a moment whose result differs between the sides.
+export function changeAt(shown: Shown, seconds: number): { check: Check; was: boolean } | null {
+  const before = new Map((shown.compare?.checks ?? []).map(c => [c.name, c.ok]))
+  const differing = (shown.checks ?? []).filter(c => before.has(c.name) && before.get(c.name) !== c.ok && (c.at ?? 0) <= seconds)
+  const last = differing.at(-1)
+
+  return last ? { check: last, was: before.get(last.name)! } : null
 }
 
 function stop($: EngineInterface, site: string) {
@@ -192,7 +210,7 @@ function stop($: EngineInterface, site: string) {
   $.ui.invalidate('ui.render')
 }
 
-function play($: EngineInterface, site: string, media: Shown) {
+function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   const one = player(site)
   const frames = media.frames
   if (one.timer || !frames) return
@@ -202,20 +220,20 @@ function play($: EngineInterface, site: string, media: Shown) {
   one.timer = $.clock.every(Math.round(1000 / frames.fps), () => {
     if (one.frame >= frames.count - 1) return stop($, site)
     one.frame += 1
-    draw($, site, media)
+    draw($, site, media, shown)
     if (one.frame % every === 0) $.ui.invalidate('ui.render')
   })
   $.ui.invalidate('ui.render')
 }
 
-const toggle = ($: EngineInterface, site: string, media: Shown) =>
-  player(site).timer ? stop($, site) : play($, site, media)
+const toggle = ($: EngineInterface, site: string, media: Shown, shown?: Shown) =>
+  player(site).timer ? stop($, site) : play($, site, media, shown)
 
-function seek($: EngineInterface, site: string, media: Shown, seconds: number) {
+function seek($: EngineInterface, site: string, media: Shown, seconds: number, shown?: Shown) {
   const frames = media.frames
   if (!frames) return
   player(site).frame = Math.max(0, Math.min(frames.count - 1, Math.round(seconds * frames.fps)))
-  draw($, site, media)
+  draw($, site, media, shown)
   $.ui.invalidate('ui.render')
 }
 
@@ -231,6 +249,21 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
   one.frame = sameMoment(from.frames, to.frames, one.frame)
   draw($, site, to)
   if (wasPlaying && to.frames) play($, site, to)
+  $.ui.invalidate('ui.render')
+}
+
+// Side by side: both sides at once, locked to the same moment, the shown
+// side's clock driving both.
+function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
+  const one = player(site)
+  if (!shown.compare || !!one.isSplit === on) return
+  const wasPlaying = !!one.timer
+  one.timer?.cancel()
+  one.timer = undefined
+  if (one.isCompare) one.frame = sameMoment(shown.compare.frames, shown.frames, one.frame)
+  one.isCompare = false
+  one.isSplit = on
+  if (wasPlaying) play($, site, shown, shown)
   $.ui.invalidate('ui.render')
 }
 
@@ -274,7 +307,7 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
 
 // The scrub row: the play control, elapsed, a clickable bar, total — exactly
 // as wide as the picture.
-function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: number) {
+function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: number, shown?: Shown) {
   const { Box, Text, Button } = ui
   const one = player(site)
   const frames = media.frames!
@@ -286,7 +319,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
 
   return (
     <Box flexDirection="row" flexWrap="nowrap" width={width}>
-      <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media)} />
+      <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media, shown)} />
       <Text dimColor> {elapsed} </Text>
       {Array.from({ length: segments }, (_, i) => (
         <Button
@@ -294,7 +327,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
           plain
           dimColor={i > playhead}
           label={i === playhead ? '●' : i < playhead ? '━' : '─'}
-          onPress={() => seek($, site, media, (i / (segments - 1)) * frames.duration)}
+          onPress={() => seek($, site, media, (i / (segments - 1)) * frames.duration, shown)}
         />
       ))}
       <Text dimColor> {total}</Text>
@@ -323,8 +356,29 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
 
 // The QA report beside the picture: the change, its PR, the checks and what
 // flipped against the compared side.
+// What was fixed or broke; each row jumps to its moment.
+function Changes(ui: Ui, $: EngineInterface, site: string, shown: Shown, fixed: Check[], broken: Check[]) {
+  const { Box, Button } = ui
+  const media = sideOf(shown, site)
+  const row = (c: Check, word: string) => (
+    <Button
+      key={`${word}-${c.name}`}
+      plain
+      label={`${c.at !== undefined ? clock(c.at) + ' ' : ''}${word} · ${c.name}`}
+      onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
+    />
+  )
+
+  return (
+    <Box flexDirection="column">
+      {fixed.map(c => row(c, '✓ fixed'))}
+      {broken.map(c => row(c, '✗ broke'))}
+    </Box>
+  )
+}
+
 function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui) {
-  const { Box, Text } = ui
+  const { Box, Text, Button } = ui
   const media = sideOf(shown, site)
   const checks = media.checks ?? []
   const other = player(site).isCompare ? shown : shown.compare
@@ -343,13 +397,13 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
       ))}
       {checks.length > 12 && <Text dimColor>+{checks.length - 12} more</Text>}
       {other && (fixed.length > 0 || broken.length > 0) && <Text dimColor>{'\n'}VS {(other.label ?? 'BEFORE').toUpperCase()}</Text>}
-      {fixed.map(c => (
-        <Text key={`f-${c.name}`} wrap="truncate-end"><Text color="success">fixed</Text> {c.name}</Text>
-      ))}
-      {broken.map(c => (
-        <Text key={`b-${c.name}`} wrap="truncate-end"><Text color="error">broke</Text> {c.name}</Text>
-      ))}
+      {Changes(ui, $, site, shown, fixed, broken)}
       {shown.compare && <Box marginTop={1}>{Tabs(ui, $, site, shown)}</Box>}
+      {shown.compare && media.frames && (
+        <Box marginTop={1}>
+          <Button key="split" variant="primary" label="⧉ Side by side" onPress={() => split($, site, shown, true)} />
+        </Box>
+      )}
     </Box>
   )
 }
@@ -391,8 +445,12 @@ function Viewer(
   // A video the agent shows starts playing by itself, once.
   if (frames && !isPane && !one.hasAutoplayed) {
     one.hasAutoplayed = true
-    void $.clock.sleep(400).then(() => play($, site, media))
+    void $.clock.sleep(400).then(() => play($, site, media, shown))
   }
+
+  // With a before recording, open side by side: the change is the point.
+  if (one.isSplit === undefined && shown.compare?.frames && frames) one.isSplit = true
+  if (one.isSplit && shown.compare && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
 
   const actions = (
     <Box flexDirection="row" gap={2}>
@@ -430,13 +488,14 @@ function Viewer(
   const stage = (
     <Box flexDirection="column" width={box.columns}>
       {Picture(ui, $, site, shown, media, box)}
-      {frames && Scrub(ui, $, site, media, box.columns)}
+      {frames && Scrub(ui, $, site, media, box.columns, shown)}
       <Box flexDirection="row" justifyContent="space-between" width={box.columns}>
         {frames ? (
           <Box flexDirection="row" gap={2}>
-            <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5)} />
-            <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5)} />
+            <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />
+            <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />
             {!isWide && Tabs(ui, $, site, shown)}
+            {!isWide && shown.compare && <Button key="split" plain label="⧉ Side by side" onPress={() => split($, site, shown, true)} />}
           </Box>
         ) : (
           (!isWide && Tabs(ui, $, site, shown)) || <Text> </Text>
@@ -469,6 +528,79 @@ function Viewer(
         {stage}
         {isWide && Report(ui, $, site, shown, prLink)}
       </Box>
+    </Box>
+  )
+}
+
+// Both sides at once: names and scores over each, the change at this moment
+// spelled out under them, one scrub row, and the list of changes.
+function SplitView(
+  ui: Ui,
+  $: EngineInterface,
+  site: string,
+  shown: Shown,
+  columns: number,
+  rows: number,
+  isPane: boolean,
+  prLink: Ui,
+) {
+  const { Box, Text, Image, Button } = ui
+  const one = player(site)
+  const before = shown.compare!
+  const half = Math.floor((columns - (isPane ? 6 : 8) - 2) / 2)
+  const box = sizeFor(shown.width, shown.height, half, rows, isPane)
+  const width = box.columns * 2 + 2
+  const seconds = one.frame / shown.frames!.fps
+  const change = changeAt(shown, seconds)
+  const { fixed, broken } = checkDiff(shown.checks, before.checks)
+  const score = (s: Shown) => {
+    const all = s.checks ?? []
+    const passed = all.filter(c => c.ok).length
+    return all.length ? <Text bold color={passed === all.length ? 'success' : 'error'}> {passed}/{all.length}</Text> : null
+  }
+  const side = (s: Shown, key: string, file: string, fallback: string) => (
+    <Box flexDirection="column" width={box.columns}>
+      <Text bold>{s.label ?? fallback}{score(s)}</Text>
+      {Image ? (
+        <Image key={key} source={{ file, format: 'png', generation: s.generation }} columns={box.columns} rows={box.rows} alt={`[${s.label ?? fallback}]`} />
+      ) : (
+        <Text dimColor>This surface cannot draw images.</Text>
+      )}
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1}>
+      <Box flexDirection="row" justifyContent="space-between" gap={2} width={width}>
+        <Text bold wrap="truncate-end">{shown.title}</Text>
+        <Box flexDirection="row" gap={2}>{prLink}<Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} /></Box>
+      </Box>
+      {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
+      <Box flexDirection="row" gap={2} marginTop={1}>
+        {side(before, 'view-a', fileAt(before, compareFrame(shown, one.frame)), 'Before')}
+        {side(shown, 'view-b', fileAt(shown, one.frame), 'After')}
+      </Box>
+      <Box width={width}>
+        {change ? (
+          <Text wrap="truncate-end">
+            <Text dimColor>{clock(change.check.at ?? 0)} · </Text>
+            {change.check.name}
+            <Text dimColor> · </Text>
+            <Text color={change.was ? 'success' : 'error'}>{before.label ?? 'Before'} {change.was ? '✓' : '✗'}</Text>
+            <Text dimColor> → </Text>
+            <Text color={change.check.ok ? 'success' : 'error'}>{shown.label ?? 'After'} {change.check.ok ? '✓' : '✗'}</Text>
+          </Text>
+        ) : (
+          <Text dimColor>Same so far: both sides match up to {clock(seconds)}</Text>
+        )}
+      </Box>
+      {Scrub(ui, $, site, shown, width, shown)}
+      {(fixed.length > 0 || broken.length > 0) && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>{fixed.length} fixed · {broken.length} broke · click one to jump there</Text>
+          {Changes(ui, $, site, shown, fixed, broken)}
+        </Box>
+      )}
     </Box>
   )
 }
