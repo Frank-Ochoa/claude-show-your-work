@@ -593,19 +593,25 @@ export function barChunks(segments: number, playhead: number, count = 20) {
   return chunks
 }
 
-// Original / Updated: the side shown is the accent button.
+// Original / Updated / Both side by side: the view shown is the accent button.
 function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const { Box, Button } = ui
   if (!shown.compare) return null
-  const isCompare = !!player(site).isCompare
-  const name = (s: Shown, fallback: string) => {
-    return s.label ?? fallback
+  const one = player(site)
+  const isBoth = !!one.isSplit
+  const isCompare = !isBoth && !!one.isCompare
+  const isUpdated = !isBoth && !isCompare
+  const canBoth = !!(shown.frames && shown.pair)
+  const pick = (toCompare: boolean) => () => {
+    if (isBoth) split($, site, shown, false)
+    flip($, site, shown, toCompare)
   }
 
   return (
     <Box flexDirection="row" gap={1}>
-      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={name(shown.compare, 'Original')} onPress={() => flip($, site, shown, true)} />
-      <Button key="side-after" variant={isCompare ? 'secondary' : 'primary'} label={name(shown, 'Updated')} onPress={() => flip($, site, shown, false)} />
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
+      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
+      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, true)} />}
     </Box>
   )
 }
@@ -650,17 +656,18 @@ const INNER = SIDE - 4 /* padding */ - 4 /* card border + padding */
 // Rows the sidebar spends on everything but the change rows.
 export function changesThatFit(height: number, summaryLines: number, hasPr: boolean, hasCompare: boolean) {
   const qa = summaryLines >= 0 ? 1 /* divider */ + 1 /* label */ + 2 /* card border */ + 1 /* total */ + summaryLines : 0
-  const footer = hasPr || hasCompare ? 1 /* divider */ + (hasPr ? 1 : 0) + (hasCompare ? 2 : 0) : 0
-  const fixed = 2 /* padding */ + 1 /* label */ + 2 /* card border */ + qa + footer
+  const footer = hasPr ? 2 /* divider + PR */ : 0
+  const tabs = hasCompare ? 2 /* tabs + divider */ : 0
+  const fixed = 2 /* padding */ + tabs + 1 /* label */ + 2 /* card border */ + qa + footer
   return Math.max(1, height - fixed)
 }
 
 // A title cut to fit one row, so a long one never pushes the rows down.
 export const cut = (text: string, width: number) => (text.length <= width ? text : text.slice(0, Math.max(1, width - 1)) + '…')
 
-// The sidebar, exactly as tall as the player, in cards: what changed (each one
-// jumps to its moment; the one playing now is lit), the QA in three lines, then
-// the PR and the Original/Updated switch.
+// The sidebar, exactly as tall as the player: the Original / Updated / Both
+// switch fixed on top, then cards for what changed (each one jumps to its
+// moment; the one playing now is lit) and the QA in three lines, then the PR.
 function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, height: number) {
   const { Box, Text, Button } = ui
   const one = player(site)
@@ -669,7 +676,6 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const summary = (shown.summary ?? []).slice(0, 3)
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
-  const hasFooter = !!prLink || !!shown.compare
   const room = changesThatFit(height, total > 0 ? summary.length : -1, !!prLink, !!shown.compare)
   const pages = Math.max(1, Math.ceil(changes.length / room))
   const page = Math.min(one.changesPage ?? 0, pages - 1)
@@ -686,6 +692,12 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
 
   return (
     <Box flexDirection="column" width={SIDE} height={height} overflow="hidden" backgroundColor={SIDEBAR} paddingX={2} paddingY={1}>
+      {shown.compare && (
+        <Box flexDirection="column">
+          {Tabs(ui, $, site, shown)}
+          {rule}
+        </Box>
+      )}
       {label(
         `WHAT CHANGED · ${changes.length}`,
         pages > 1 ? (
@@ -745,14 +757,10 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
           </Box>
         </Box>
       )}
-      {hasFooter && (
+      {prLink && (
         <Box flexDirection="column">
           {rule}
-          {prLink && <Box flexDirection="row" gap={1}><Text dimColor>PR</Text>{prLink}</Box>}
-          {shown.compare && Tabs(ui, $, site, shown)}
-          {shown.compare && media.frames && shown.pair && (
-            <Button key="split" variant="primary" label="⧉ Side by side" onPress={() => split($, site, shown, true)} />
-          )}
+          <Box flexDirection="row" gap={1}><Text dimColor>PR</Text>{prLink}</Box>
         </Box>
       )}
     </Box>
@@ -917,7 +925,6 @@ async function Viewer(
           {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
           {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
           {!isWide && Tabs(ui, $, site, shown)}
-          {!isWide && shown.compare && frames && shown.pair && <Button key="split" plain label="⧉ Side by side" onPress={() => split($, site, shown, true)} />}
         </Box>
         <Box flexDirection="row" columnGap={2}>
           {opener}
@@ -997,7 +1004,7 @@ async function SplitView(
         <Text bold wrap="truncate-end">{shown.title}</Text>
         <Box flexDirection="row" gap={2}>
           {prLink}
-          <Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} />
+          {Tabs(ui, $, site, shown)}
         </Box>
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
