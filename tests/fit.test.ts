@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changeAt, checkDiff, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { cellsFrom, changeAt, checkDiff, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -109,4 +109,11 @@ test('notes become a prompt with where, when and the pinned frame', () => {
   const text = notesPrompt(shown, [{ n: 1, at: 7.4, frame: 89, x: 0.25, y: 0.5, text: 'Logo too small', file: '/tmp/p.png' }], true)
   expect(text).toContain('Feedback on "Agent QA" (/w/qa.webm)')
   expect(text).toContain('1. at 0:07, 25% across, 50% down: Logo too small (pinned frame: /tmp/p.png)')
+})
+
+test('two pixel rows become one row of half-block cells', () => {
+  // 1 column, 2 pixel rows: red over blue
+  const rgb = Uint8Array.of(255, 0, 0, 0, 0, 255)
+  const words = new Uint32Array((Uint8Array as any).fromBase64(cellsFrom(rgb, 1, 1)).buffer)
+  expect(Array.from(words)).toEqual([0x2580, 0xff0000, 0x0000ff])
 })
