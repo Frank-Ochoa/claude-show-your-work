@@ -19,7 +19,7 @@ test('sizes stay inside the 1..255 cell limits', () => {
 test('the result text round-trips to the shown image', () => {
 
   const shown = { path: '/tmp/a.png', width: 10, height: 5, title: 'a', generation: 1 }
-  const text = `Shown to the user: a (10×5).\nimage-view:${JSON.stringify(shown)}`
+  const text = `Shown to the user: a (10×5).\nshow-your-work:${JSON.stringify(shown)}`
   expect(parseShown(text)).toEqual(shown)
   expect(parseShown([{ type: 'text', text }])).toEqual(shown)
   expect(parseShown('nothing here')).toBe(null)
@@ -84,16 +84,16 @@ test('side by side names the latest change up to the moment shown', () => {
 })
 
 test('temp files are scratch, finished work is not', () => {
-  expect(isScratch('/tmp/claude-image-view/a.png')).toBe(true)
+  expect(isScratch('/tmp/claude-show-your-work/a.png')).toBe(true)
   expect(isScratch('/private/tmp/claude-501/x/qa.webm')).toBe(true)
   expect(isScratch('/var/folders/rq/x/T/shot.png')).toBe(true)
   expect(isScratch('/Users/u/Movies/launch.mp4')).toBe(false)
 })
 
 test('the call row is one short line', () => {
-  const line = toolLine('mcp__image-view__show_video', { path: '/tmp/x/qa.webm', title: 'Agent QA', compare: '/tmp/b.webm', compare_label: 'Live', checks: [1, 2, 3] }, false)
+  const line = toolLine('mcp__show-your-work__show_video', { path: '/tmp/x/qa.webm', title: 'Agent QA', compare: '/tmp/b.webm', compare_label: 'Live', checks: [1, 2, 3] }, false)
   expect(line).toBe('▶ Video · Agent QA · vs Live · 3 checks')
-  expect(toolLine('mcp__image-view__show_image', { path: '/a/b/shot.png' }, true)).toBe('▣ Loading image · shot.png')
+  expect(toolLine('mcp__show-your-work__show_image', { path: '/a/b/shot.png' }, true)).toBe('▣ Loading image · shot.png')
 })
 
 test('open page follows the latest check with a url', () => {
@@ -158,4 +158,9 @@ test('sidebar text wraps whole words and never loses any', () => {
 test('changes page by rows and an item never splits', () => {
   const pages = pagesOf([{ item: 'a', rows: 2 }, { item: 'b', rows: 2 }, { item: 'c', rows: 1 }], 3)
   expect(pages).toEqual([['a'], ['b', 'c']])
+})
+
+test('windows from before the rename still parse', () => {
+  const old = parseShown(`Shown.\nimage-view:${JSON.stringify({ path: '/a.png', width: 1, height: 1, title: 'a', generation: 1 })}`)
+  expect(old?.title).toBe('a')
 })

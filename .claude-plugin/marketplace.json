@@ -1,5 +1,5 @@
 {
-  "name": "umer-mods",
+  "name": "show-your-work",
   "owner": { "name": "Umer Ansari" },
-  "plugins": [{ "name": "image-view", "source": "./" }]
+  "plugins": [{ "name": "show-your-work", "source": "./" }]
 }

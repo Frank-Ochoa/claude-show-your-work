@@ -3,10 +3,12 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Check, Frames, KeyChange, Overlay, Shown, Summary } from '../types'
 
-const PANE = 'image-view'
-const TOOLS = ['mcp__image-view__show_image', 'mcp__image-view__show_video']
-const TMP = '/tmp/claude-image-view'
-const MARK = 'image-view:'
+const PANE = 'show-your-work'
+// The tools, and their names from before the rename, so old windows still draw.
+const TOOLS = ['show_image', 'show_video'].flatMap(t => [`mcp__show-your-work__${t}`, `mcp__image-view__${t}`])
+const TMP = '/tmp/claude-show-your-work'
+const MARK = 'show-your-work:'
+const OLD_MARK = 'image-view:'
 const VIDEO = /\.(mp4|mov|m4v|webm|mkv|avi|gif)$/i
 // Frames a clip is cut into at most, and the rate it plays at below that.
 const MAX_FRAMES = 900
@@ -18,7 +20,7 @@ const SIDE = 40
 // The sidebar's fill: darker than the window, so the report stands apart.
 const SIDEBAR = '#1d1e23'
 const WIDE_ENOUGH = 110
-const current = atom({ plugin: 'image-view', key: 'current' } as const, null)
+const current = atom({ plugin: 'show-your-work', key: 'current' } as const, null)
 
 let cwd = ''
 let home = ''
@@ -290,7 +292,7 @@ async function prepare($: EngineInterface, raw: string, title?: string): Promise
   return { kind: 'image', path: png, source: real, ...(await pngSize($, png)), title: name, generation }
 }
 
-// The tool's text result carries the shown item as `image-view:{json}`;
+// The tool's text result carries the shown item as `show-your-work:{json}`;
 // the output may be that string or a list of text blocks.
 export function parseShown(output: unknown): Shown | null {
   const text =
@@ -299,10 +301,10 @@ export function parseShown(output: unknown): Shown | null {
       : Array.isArray(output)
         ? output.map(b => (b && typeof b === 'object' && 'text' in b ? String(b.text) : '')).join('\n')
         : ''
-  const line = text.split('\n').find(l => l.startsWith(MARK))
+  const line = text.split('\n').find(l => l.startsWith(MARK) || l.startsWith(OLD_MARK))
   if (!line) return null
   try {
-    return JSON.parse(line.slice(MARK.length)) as Shown
+    return JSON.parse(line.slice(line.indexOf(':') + 1)) as Shown
   } catch {
     return null
   }
@@ -1282,7 +1284,7 @@ export const register: Register = on => {
     }
   })
 
-  on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
+  on('tool.call', { tool: /^mcp__show-your-work__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
@@ -1313,9 +1315,9 @@ export const register: Register = on => {
 
       return { result: `Shown to the user: ${shown.title} (${what}).\n${MARK}${JSON.stringify(shown)}` }
     } catch (err) {
-      return { deny: `image-view: ${(err as Error).message}` }
+      return { deny: `show-your-work: ${(err as Error).message}` }
     }
-  }).catch(() => ({ deny: 'image-view: it could not be shown.' }))
+  }).catch(() => ({ deny: 'show-your-work: it could not be shown.' }))
 
   // The call's own row: one short line, not the whole input.
   on('ui.render', { component: 'ToolUse' }, ($, e, next) => {

@@ -1,1 +1,1 @@
-{ "name": "image-view", "version": "0.3.4", "description": "Show PNG/JPEG/WebP images inline in the terminal (kitty/Ghostty graphics)", "types": "./types/index.d.ts" }
+{ "name": "show-your-work", "version": "0.4.0", "description": "Claude shows its finished work right in the chat: screenshots, videos of it clicking through your app, and synced before/after QA", "types": "./types/index.d.ts" }
