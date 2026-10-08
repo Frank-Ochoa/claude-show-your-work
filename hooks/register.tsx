@@ -229,6 +229,9 @@ export function turns(match: number[], fpsA: number, fpsB: number): [number, num
   return points.length > 40 ? points.filter((_, k) => k % Math.ceil(points.length / 40) === 0) : points
 }
 
+// Pixels between Original and Updated in the merged clip.
+const PAIR_GAP = 40
+
 // Merges the original and updated recordings into one clip, side by side.
 // The original's frames are matched to the updated clip's by how they look,
 // so every step happens at the same moment on both sides.
@@ -245,7 +248,7 @@ async function preparePair($: EngineInterface, original: Shown, updated: Shown) 
   await $.process.run(['sh', '-c', links, g.dir, dir])
   const made = await $.process.run([
     ffmpeg, '-v', 'error', '-framerate', String(f.fps), '-i', `${dir}/o/f%05d.png`, '-framerate', String(f.fps), '-i', `${f.dir}/f%05d.png`,
-    '-filter_complex', '[0:v]scale=-2:360[a];[1:v]scale=-2:360[b];[a][b]hstack=inputs=2',
+    '-filter_complex', `[0:v]scale=-2:360,pad=iw+${PAIR_GAP}:ih:0:0:color=${SIDEBAR.replace('#', '0x')}[a];[1:v]scale=-2:360[b];[a][b]hstack=inputs=2`,
     '-frames:v', String(f.count), '-compression_level', '1', `${dir}/f%05d.png`,
   ])
   await $.process.run(['rm', '-rf', `${dir}/o`])
@@ -674,7 +677,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
     <Box flexDirection="row" gap={1}>
       <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
       <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
-      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, true)} />}
+      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
     </Box>
   )
 }
@@ -1083,18 +1086,20 @@ async function SplitView(
   // One merged clip, Original left and Updated right: one picture per frame.
   const box = sizeFor(shown.pairWidth ?? shown.width * 2, shown.pairHeight ?? shown.height, columns - (isPane ? 6 : 10), rows, isPane)
   const width = box.columns
-  const half = Math.floor(width / 2)
+  // The Updated side starts past the Original side and the gap between them.
+  const pairPx = shown.pairWidth ?? shown.width * 2
+  const half = Math.round((width * ((pairPx - PAIR_GAP) / 2 + PAIR_GAP)) / pairPx)
   const seconds = one.frame / shown.frames!.fps
   const change = changeAt(shown, seconds)
   const { fixed, broken } = checkDiff(shown.checks, before.checks)
   one.box = { columns: box.columns, rows: box.rows }
   const pic = await picFor($, frameFile(pair, Math.min(one.frame, pair.count - 1)), box)
   probe($, site, 'view-pair', pic)
-  const head = (s: Shown, fallback: string) => {
+  const head = (s: Shown, fallback: string, w: number) => {
     const words = resultWords(s.checks)
     const ok = (s.checks ?? []).every(c => c.ok)
     return (
-      <Box width={half} flexDirection="row" gap={1}>
+      <Box width={w} flexDirection="row" gap={1}>
         <Text bold>{s.label ?? fallback}</Text>
         {words && <Text color={ok ? 'success' : 'error'}>· {words}</Text>}
       </Box>
@@ -1112,8 +1117,8 @@ async function SplitView(
       </Box>
       {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
       <Box flexDirection="row" marginTop={1} width={width}>
-        {head(before, 'Original')}
-        {head(shown, 'Updated')}
+        {head(before, 'Original', half)}
+        {head(shown, 'Updated', width - half)}
       </Box>
       {Image ? (
         <Image key="view-pair" source={pic.src} columns={box.columns} rows={box.rows} alt="[original and updated, side by side]" />
