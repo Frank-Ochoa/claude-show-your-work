@@ -394,31 +394,21 @@ function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
 type Ui = any
 type Box = { columns: number; rows: number }
 
-// The picture, with whatever catches a click on it laid over it.
+// The picture.
 function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, box: Box, pic: Pic) {
-  const { Box, Text, Image, Button } = ui
-  const one = player(site)
-  const frames = media.frames
-  const overlay: Overlay = shown.overlay ?? 'center'
-  const word = frames ? playWord(!!one.timer, one.frame, frames.count) : ''
-  const centre = `${word}`
+  const { Text, Image } = ui
   if (!Image) return <Text dimColor>This surface cannot draw images.</Text>
 
+  // The picture stands alone: no wrapper, nothing laid over it and no fill
+  // behind it. Each of those kept the picture from drawing in Ghostty.
   return (
-    <Box position="relative" width={box.columns} height={box.rows}>
-      <Image
-        key="view"
-        source={pic.src}
-        columns={box.columns}
-        rows={box.rows}
-        alt={`[${media.kind ?? 'image'}: ${shown.title}]`}
-      />
-      {frames && overlay === 'center' && !one.timer && (
-        <Box position="absolute" top={Math.floor(box.rows / 2)} left={Math.max(0, Math.floor((box.columns - centre.length - 4) / 2))}>
-          <Button key="centre" variant="primary" label={centre} onPress={() => play($, site, media)} />
-        </Box>
-      )}
-    </Box>
+    <Image
+      key="view"
+      source={pic.src}
+      columns={box.columns}
+      rows={box.rows}
+      alt={`[${media.kind ?? 'image'}: ${shown.title}]`}
+    />
   )
 }
 
@@ -849,7 +839,7 @@ async function Viewer(
   )
 
   return (
-    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1} width={box.columns + (isWide ? SIDE + 3 : 0) + 4}>
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={box.columns + (isWide ? SIDE + 3 : 0) + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" gap={2} flexShrink={1}>
           <Text bold wrap="truncate-end">{shown.title}</Text>
@@ -919,7 +909,7 @@ async function SplitView(
   )
 
   return (
-    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1} width={width + 4}>
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={width + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2} width={width}>
         <Text bold wrap="truncate-end">{shown.title}</Text>
         <Box flexDirection="row" gap={2}>
