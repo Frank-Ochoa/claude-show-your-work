@@ -34,6 +34,8 @@ type Player = {
   isCompare?: boolean
   isSplit?: boolean
   hasAutoplayed?: boolean
+  // how many bar cells the scrub row last drew, so playback redraws only on a change
+  segments?: number
   // the picture's size in cells as last drawn, for repaints
   box?: { columns: number; rows: number }
   // commenting: picking a spot, then writing the note for it
@@ -42,6 +44,8 @@ type Player = {
   notes?: Note[]
 }
 const players = new Map<string, Player>()
+// Calls made since this load: only these autoplay, not every window a reload redraws.
+const freshCalls = new Set<string>()
 const player = (site: string): Player => {
   let one = players.get(site)
   if (!one) players.set(site, (one = { frame: 0 }))
@@ -338,14 +342,27 @@ function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   const one = player(site)
   const frames = media.frames
   if (one.timer || !frames) return
+  // One video plays at a time: starting this one pauses the rest.
+  for (const [other, p] of players) {
+    if (other !== site && p.timer) {
+      p.timer.cancel()
+      p.timer = undefined
+    }
+  }
   if (one.frame >= frames.count - 1) one.frame = 0
-  // The picture swaps every frame; the bar and the time redraw ~4 times a second.
-  const every = Math.max(1, Math.round(frames.fps / 4))
+  // The picture swaps every frame; the bar and the time redraw once a second.
+  // A redraw repaints every player window in the chat, so it stays rare.
+  const marks = () => String(Math.floor(one.frame / frames.fps))
+  let last = marks()
   one.timer = $.clock.every(Math.round(1000 / frames.fps), () => {
     if (one.frame >= frames.count - 1) return stop($, site)
     one.frame += 1
     draw($, site, media, shown)
-    if (one.frame % every === 0) $.ui.invalidate('ui.render')
+    const now = marks()
+    if (now !== last) {
+      last = now
+      $.ui.invalidate('ui.render')
+    }
   })
   $.ui.invalidate('ui.render')
 }
@@ -424,6 +441,21 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   const segments = Math.max(6, width - (word.length + 4) - elapsed.length - total.length - 4)
   const playhead = Math.min(segments - 1, Math.round((one.frame / Math.max(1, frames.count - 1)) * (segments - 1)))
   const noted = new Set((one.notes ?? []).map(n => Math.round((n.at / Math.max(0.1, frames.duration)) * (segments - 1))))
+  one.segments = segments
+
+  // Playing: the bar is one cheap line of text. Paused: every cell is a button
+  // that jumps there.
+  if (one.timer) {
+    return (
+      <Box flexDirection="row" flexWrap="nowrap" width={width}>
+        <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media, shown)} />
+        <Text dimColor> {elapsed} </Text>
+        <Text>{'━'.repeat(playhead)}●</Text>
+        <Text dimColor>{'─'.repeat(Math.max(0, segments - playhead - 1))}</Text>
+        <Text dimColor> {total}</Text>
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="row" flexWrap="nowrap" width={width}>
@@ -770,7 +802,7 @@ async function Viewer(
     void $.process.run(argv).then(r => $.ui.toast(r.exitCode === 0 ? note : `Could not: ${r.stderr.trim()}`))
   }
   // A video the agent shows starts playing by itself, once.
-  if (frames && !isPane && !one.hasAutoplayed) {
+  if (frames && !isPane && !one.hasAutoplayed && freshCalls.has(site)) {
     one.hasAutoplayed = true
     void $.clock.sleep(400).then(() => play($, site, media, shown), () => undefined)
   }
@@ -1071,6 +1103,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
+    freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
