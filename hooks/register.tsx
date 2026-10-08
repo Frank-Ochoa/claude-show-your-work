@@ -710,7 +710,9 @@ function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media
 }
 
 // Shown while pictures are drawn as cells: why, and the way back to full quality.
-export const resumeCommand = (id: string) => (id ? `claude --resume ${id}` : 'claude --resume')
+// Resumes this chat outside the background service, so pictures draw again.
+export const resumeCommand = (id: string) =>
+  `CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume${id ? ' ' + id : ''}`
 
 // The whole window, while pictures can't draw here: a warning with the way
 // back to full quality, and the blocky preview only if asked for.

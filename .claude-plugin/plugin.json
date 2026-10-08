@@ -1,1 +1,1 @@
-{ "name": "image-view", "version": "0.3.3", "description": "Show PNG/JPEG/WebP images inline in the terminal (kitty/Ghostty graphics)", "types": "./types/index.d.ts" }
+{ "name": "image-view", "version": "0.3.4", "description": "Show PNG/JPEG/WebP images inline in the terminal (kitty/Ghostty graphics)", "types": "./types/index.d.ts" }

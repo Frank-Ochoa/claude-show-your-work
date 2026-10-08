@@ -113,6 +113,6 @@ test('notes become a prompt with where, when and the pinned frame', () => {
 
 
 test('the resume command names this session', () => {
-  expect(resumeCommand('abc-123')).toBe('claude --resume abc-123')
-  expect(resumeCommand('')).toBe('claude --resume')
+  expect(resumeCommand('abc-123')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume abc-123')
+  expect(resumeCommand('')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume')
 })
