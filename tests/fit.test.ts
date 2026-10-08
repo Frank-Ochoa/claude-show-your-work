@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -163,4 +163,9 @@ test('changes page by rows and an item never splits', () => {
 test('windows from before the rename still parse', () => {
   const old = parseShown(`Shown.\nimage-view:${JSON.stringify({ path: '/a.png', width: 1, height: 1, title: 'a', generation: 1 })}`)
   expect(old?.title).toBe('a')
+})
+
+test('changes list in clip order, untimed ones last', () => {
+  const out = inClipOrder([{ title: 'focus', at: 14 }, { title: 'note' }, { title: 'hover', at: 9 }, { title: 'cards', at: 7 }])
+  expect(out.map(c => c.title)).toEqual(['cards', 'hover', 'focus', 'note'])
 })

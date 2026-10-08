@@ -734,6 +734,12 @@ export function changesThatFit(height: number, summaryRows: number, hasPr: boole
   return Math.max(1, height - fixed)
 }
 
+// Changes in the order they show in the clip; ones without a time keep
+// their place after the timed ones.
+export function inClipOrder(changes: KeyChange[]): KeyChange[] {
+  return changes.map((c, i) => ({ c, i })).sort((a, b) => (a.c.at ?? Infinity) - (b.c.at ?? Infinity) || a.i - b.i).map(x => x.c)
+}
+
 // Words wrapped to lines of at most width, so the whole text is always shown.
 export function wrapWords(text: string, width: number): string[] {
   const lines: string[] = []
@@ -782,14 +788,14 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const isTwo = !isBeside && width - 4 >= TWO_COLUMNS
   const column = isTwo ? Math.floor((width - 4 - 3) / 2) : width - 4
   const TITLE = titleWidth(column), LABEL = labelWidth(column)
-  const changes: KeyChange[] = shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : []
+  const changes = inClipOrder(shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : [])
   const summary = (shown.summary ?? []).slice(0, 3).map(s => ({ ...s, lines: wrapWords(s.label, LABEL) }))
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
   const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
   const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink, !!shown.compare) : Infinity
   const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
-  const pages = pagesOf(wrapped.map(w => ({ item: w, rows: w.lines.length })), room)
+  const pages = pagesOf(wrapped.map((w, i) => ({ item: w, rows: w.lines.length + (i ? 1 : 0) })), room)
   const page = Math.min(one.changesPage ?? 0, pages.length - 1)
   const now = media.frames ? one.frame / media.frames.fps : -1
   const live = changes.reduce((hit, c, i) => (c.at !== undefined && c.at <= now ? i : hit), -1)
@@ -817,11 +823,11 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
           />
         ) : undefined,
       )}
-      {(pages[page] ?? []).map(({ c, n, lines }) => {
+      {(pages[page] ?? []).map(({ c, n, lines }, k) => {
         const isLive = n === live
         const jump = () => c.at !== undefined && seek($, site, media, c.at, shown)
         return (
-          <Box key={`change-${n}`} flexDirection="row" gap={1}>
+          <Box key={`change-${n}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
             <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
             <Box flexDirection="column" width={TITLE}>
               {lines.map((line, i) => (
@@ -1186,7 +1192,7 @@ const TOOL_INPUT = {
     url: { type: 'string', description: 'The page this shows (a localhost or deployed URL): adds an Open page button' },
     changes: {
   type: 'array',
-  description: 'The key changes to review, newest work first: each { title (a few words), detail?, at? (seconds into the clip), url? }',
+  description: 'The key changes to review: each { title (a few words), detail?, at? (seconds into the clip where it shows), url? }. They are listed in clip order.',
   items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, at: { type: 'number' }, url: { type: 'string' } }, required: ['title'] },
 },
     summary: {
