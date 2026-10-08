@@ -46,14 +46,18 @@ type Player = {
 const players = new Map<string, Player>()
 // Calls made since this load: only these autoplay, not every window a reload redraws.
 const freshCalls = new Set<string>()
-// The newest windows stay open; older ones fold to one line so scrolling the
-// chat doesn't redraw pictures. Opened by hand: stays open.
-const OPEN_NEWEST = 2
-const recentCalls: string[] = []
-const openedByHand = new Set<string>()
+// Every change that should repaint bumps this; a window's drawing is kept and
+// handed back while nothing changed (scrolling only moves which rows show).
+let version = 0
+const versions = new Map<string, number>()
+const drawn = new Map<string, { key: string; tree: unknown }>()
 
-export function isOpen(site: string, recent: string[], byHand: Set<string>, keep = OPEN_NEWEST) {
-  return byHand.has(site) || recent.slice(-keep).includes(site)
+// A change to one window bumps only its own count, so the others hand back
+// their kept drawing when the repaint reaches them.
+function redraw($: EngineInterface, site?: string) {
+  if (site) versions.set(site, (versions.get(site) ?? 0) + 1)
+  else version += 1
+  $.ui.invalidate('ui.render')
 }
 const player = (site: string): Player => {
   let one = players.get(site)
@@ -322,7 +326,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
     if (r.deny && /alt/i.test(r.deny)) {
       canImage = false
       $.ui.toast("This background session can't draw pictures: see the warning in the chat.")
-      $.ui.invalidate('ui.render')
+      redraw($)
     }
   }, () => undefined)
 }
@@ -378,7 +382,7 @@ function stop($: EngineInterface, site: string) {
   const one = player(site)
   one.timer?.cancel()
   one.timer = undefined
-  $.ui.invalidate('ui.render')
+  redraw($, site)
 }
 
 function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
@@ -390,6 +394,7 @@ function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
     if (other !== site && p.timer) {
       p.timer.cancel()
       p.timer = undefined
+      versions.set(other, (versions.get(other) ?? 0) + 1)
     }
   }
   if (one.frame >= frames.count - 1) one.frame = 0
@@ -404,10 +409,10 @@ function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
     const now = marks()
     if (now !== last) {
       last = now
-      $.ui.invalidate('ui.render')
+      redraw($, site)
     }
   })
-  $.ui.invalidate('ui.render')
+  redraw($, site)
 }
 
 const toggle = ($: EngineInterface, site: string, media: Shown, shown?: Shown) =>
@@ -418,7 +423,7 @@ function seek($: EngineInterface, site: string, media: Shown, seconds: number, s
   if (!frames) return
   player(site).frame = Math.max(0, Math.min(frames.count - 1, Math.round(seconds * frames.fps)))
   draw($, site, media, shown)
-  $.ui.invalidate('ui.render')
+  redraw($, site)
 }
 
 function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean) {
@@ -433,7 +438,7 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
   one.frame = sameMoment(from.frames, to.frames, one.frame)
   draw($, site, to)
   if (wasPlaying && to.frames) play($, site, to)
-  $.ui.invalidate('ui.render')
+  redraw($, site)
 }
 
 // Side by side: both sides at once, locked to the same moment, the shown
@@ -448,7 +453,7 @@ function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
   one.isCompare = false
   one.isSplit = on
   if (wasPlaying) play($, site, shown, shown)
-  $.ui.invalidate('ui.render')
+  redraw($, site)
 }
 
 type Ui = any
@@ -500,22 +505,41 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
     )
   }
 
+  // Paused: the bar is ~20 wide buttons, each a stretch you can jump to.
+  const chunks = barChunks(segments, playhead, noted)
+
   return (
     <Box flexDirection="row" flexWrap="nowrap" width={width}>
       <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media, shown)} />
       <Text dimColor> {elapsed} </Text>
-      {Array.from({ length: segments }, (_, i) => (
+      {chunks.map((c, i) => (
         <Button
           key={`seek-${i}`}
           plain
-          dimColor={i > playhead}
-          label={i === playhead ? '●' : noted.has(i) ? '◆' : i < playhead ? '━' : '─'}
-          onPress={() => seek($, site, media, (i / (segments - 1)) * frames.duration, shown)}
+          dimColor={c.isAhead}
+          label={c.label}
+          onPress={() => seek($, site, media, (c.start / Math.max(1, segments - 1)) * frames.duration, shown)}
         />
       ))}
       <Text dimColor> {total}</Text>
     </Box>
   )
+}
+
+// Splits the bar's cells into ~20 stretches: played cells '━', the playhead
+// '●', notes '◆', the rest '─'; a stretch is dim once it lies ahead.
+export function barChunks(segments: number, playhead: number, noted: Set<number> = new Set(), count = 20) {
+  const size = Math.max(1, Math.ceil(segments / count))
+  const chunks: { start: number; label: string; isAhead: boolean }[] = []
+  for (let start = 0; start < segments; start += size) {
+    let label = ''
+    for (let i = start; i < Math.min(segments, start + size); i++) {
+      label += i === playhead ? '●' : noted.has(i) ? '◆' : i < playhead ? '━' : '─'
+    }
+    chunks.push({ start, label, isAhead: start > playhead })
+  }
+
+  return chunks
 }
 
 // Original / Updated: the side shown is the accent button.
@@ -663,7 +687,7 @@ async function addPin($: EngineInterface, site: string, media: Shown, x: number,
   one.mode = undefined
   one.spot = undefined
   draw($, site, media)
-  $.ui.invalidate('ui.render')
+  redraw($, site)
 }
 
 // The notes as a prompt for the agent: where, when, what, and the pinned frames.
@@ -686,7 +710,7 @@ function Commenting(ui: Ui, $: EngineInterface, site: string, shown: Shown, medi
       <Box flexDirection="column" width={width} marginTop={1}>
         <Box flexDirection="row" gap={2}>
           <Text bold>Where? Click the spot on this map of the picture</Text>
-          <Button key="cancel" plain dimColor label="Cancel" onPress={() => { one.mode = undefined; $.ui.invalidate('ui.render') }} />
+          <Button key="cancel" plain dimColor label="Cancel" onPress={() => { one.mode = undefined; redraw($, site) }} />
         </Box>
         {Array.from({ length: GRID_ROWS }, (_, r) => (
           <Box key={`gr-${r}`} flexDirection="row">
@@ -699,7 +723,7 @@ function Commenting(ui: Ui, $: EngineInterface, site: string, shown: Shown, medi
                 onPress={() => {
                   one.spot = { x: (c + 0.5) / GRID_COLS, y: (r + 0.5) / GRID_ROWS }
                   one.mode = 'write'
-                  $.ui.invalidate('ui.render')
+                  redraw($, site)
                 }}
               />
             ))}
@@ -763,7 +787,7 @@ function NotesList(ui: Ui, $: EngineInterface, site: string, shown: Shown, media
             player(site).notes = []
             for (const key of [...pinned.keys()]) if (key.startsWith(`${site}:`)) pinned.delete(key)
             draw($, site, media)
-            $.ui.invalidate('ui.render')
+            redraw($, site)
           }}
         />
         <Text dimColor>numbers match the pins on the picture</Text>
@@ -804,33 +828,6 @@ function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: 
           }
         />
       </Box>
-    </Box>
-  )
-}
-
-// An older window, folded to one line: what it is, and a button to open it.
-function Folded($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], shown: Shown, site: string) {
-  const { Box, Text, Button } = $.ui.resolve(e) as Ui
-  const one = player(site)
-  if (one.timer) stop($, site)
-  const what = shown.frames ? `video · ${clock(shown.frames.duration)}` : `image · ${shown.width}×${shown.height}`
-  const words = resultWords(shown.checks)
-
-  return (
-    <Box flexDirection="row" gap={2} borderStyle="round" borderColor="subtle" paddingX={1}>
-      <Button
-        key="unfold"
-        plain
-        label="▸ Show"
-        onPress={() => {
-          openedByHand.add(site)
-          $.ui.invalidate('ui.render')
-        }}
-      />
-      <Text bold wrap="truncate-end">{shown.title}</Text>
-      <Text dimColor>{what}</Text>
-      {shown.compare && <Text dimColor>· original vs updated</Text>}
-      {words && <Text color={(shown.checks ?? []).every(c => c.ok) ? 'success' : 'error'}>· {words}</Text>}
     </Box>
   )
 }
@@ -905,7 +902,7 @@ async function Viewer(
         one.timer?.cancel()
         one.timer = undefined
         one.mode = 'place'
-        $.ui.invalidate('ui.render')
+        redraw($, site)
       }}
     />
   )
@@ -1008,7 +1005,7 @@ async function SplitView(
         <Text bold wrap="truncate-end">{shown.title}</Text>
         <Box flexDirection="row" gap={2}>
           {prLink}
-          <Button key="comment" plain label="✎ Comment" onPress={() => { split($, site, shown, false); player(site).mode = 'place'; $.ui.invalidate('ui.render') }} />
+          <Button key="comment" plain label="✎ Comment" onPress={() => { split($, site, shown, false); player(site).mode = 'place'; redraw($, site) }} />
           <Button key="single" plain dimColor label="▣ Single view" onPress={() => split($, site, shown, false)} />
         </Box>
       </Box>
@@ -1171,7 +1168,6 @@ export const register: Register = on => {
 
   on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
-    recentCalls.push(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
@@ -1222,11 +1218,15 @@ export const register: Register = on => {
       if (one.timer) stop($, e.requestId)
       one.hasAutoplayed = true
     }
+    const key = `${version}|${versions.get(e.requestId) ?? 0}|${e.viewport?.columns ?? 0}|${e.viewport?.rows ?? 0}`
+    const kept = drawn.get(e.requestId)
+    if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
     const shown = parseShown(props.output)
     if (!shown) return next(e)
-    if (!isOpen(e.requestId, recentCalls, openedByHand)) return Folded($, e, shown, e.requestId)
+    const tree = await Viewer($, e, shown, e.requestId, false, e.viewport)
+    drawn.set(e.requestId, { key, tree })
 
-    return Viewer($, e, shown, e.requestId, false, e.viewport)
+    return tree
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

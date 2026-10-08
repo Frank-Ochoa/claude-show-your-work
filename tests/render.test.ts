@@ -13,11 +13,6 @@ for (const columns of [140, 90]) {
       props: { tool_use_id: 'tu-1', tool: 'mcp__image-view__show_video', output, isErrored: false },
       viewport: { columns, rows: 50 },
     } as any
-    // Windows not shown by a call this load start folded: open it first.
-    const folded = await $.ui.mount(target)
-    expect(JSON.stringify(await folded.drawn()).includes('▸ Show')).toBe(true)
-    await ($.ui as any).press({ plugin: "image-view", key: "unfold", requestId: target.requestId })
-    await folded.unmount()
     const mounted = await $.ui.mount(target)
     const tree = JSON.stringify(await mounted.drawn())
 
@@ -33,11 +28,6 @@ test('the window is never wider than the terminal', async $ => {
       props: { tool_use_id: `w-${columns}`, tool: 'mcp__image-view__show_video', output, isErrored: false },
       viewport: { columns, rows: 50 },
     } as any
-    // Windows not shown by a call this load start folded: open it first.
-    const folded = await $.ui.mount(target)
-    expect(JSON.stringify(await folded.drawn()).includes('▸ Show')).toBe(true)
-    await ($.ui as any).press({ plugin: "image-view", key: "unfold", requestId: target.requestId })
-    await folded.unmount()
     const mounted = await $.ui.mount(target)
     const tree = (await mounted.drawn()) as any
     expect(tree.props.width).toBeLessThanOrEqual(columns - 4)
