@@ -217,7 +217,16 @@ const compareFrame = (shown: Shown, frame: number) => sameMoment(shown.frames, s
 // Pictures go to the terminal as PNG bytes, not file paths: a background
 // session's terminal cannot open files on this machine, bytes always reach it.
 const bytes = new Map<string, Promise<string>>()
-const KEEP = 64
+const sizes = new Map<string, number>()
+// Frames held for smooth playback, at most this many bytes of base64.
+const KEEP_BYTES = 24 * 1024 * 1024
+let held = 0
+
+function forget(file: string) {
+  held -= sizes.get(file) ?? 0
+  sizes.delete(file)
+  bytes.delete(file)
+}
 
 type Source = { png: string } | { file: string; format: 'png' }
 
@@ -229,10 +238,20 @@ export function pngSource($: EngineInterface, file: string): Promise<Source> {
 function pngBytes($: EngineInterface, file: string): Promise<{ png: string }> {
   let hit = bytes.get(file)
   if (!hit) {
-    hit = $.fs.read(file, { as: 'bytes' }).then(r => (r as { base64: string }).base64)
+    hit = $.fs.read(file, { as: 'bytes' }).then(r => {
+      const b64 = (r as { base64: string }).base64
+      sizes.set(file, b64.length)
+      held += b64.length
+      // Oldest first: the frames played longest ago leave.
+      while (held > KEEP_BYTES && bytes.size > 1) forget(bytes.keys().next().value!)
+      return b64
+    })
     bytes.set(file, hit)
-    hit.catch(() => bytes.delete(file))
-    while (bytes.size > KEEP) bytes.delete(bytes.keys().next().value!)
+    hit.catch(() => forget(file))
+  } else {
+    // Recently used: move to the back of the line.
+    bytes.delete(file)
+    bytes.set(file, hit)
   }
 
   return hit.then(png => ({ png }))
@@ -915,6 +934,8 @@ export const register: Register = on => {
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
     // Frames are ~0.3 MB each: keep only the newest few clips' worth.
     void $.process.run(['sh', '-c', `ls -dt ${TMP}/v* 2>/dev/null | tail -n +7 | xargs rm -rf`])
+    // Converted pictures and pinned frames older than two days go too.
+    void $.process.run(['sh', '-c', `find ${TMP} -maxdepth 2 -type f -mtime +2 -delete 2>/dev/null; true`])
     await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',
@@ -1019,8 +1040,14 @@ export const register: Register = on => {
 
   // Inline in the transcript: the player is the tool's result row.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
-    const props = e.props as { tool: string; output: unknown; isErrored: boolean }
+    const props = e.props as { tool: string; output: unknown; isErrored: boolean; onScreen?: unknown }
     if (!TOOLS.includes(props.tool) || props.isErrored) return next(e)
+    // Scrolled out of view: stop playing, and don't start there.
+    if (props.onScreen === null) {
+      const one = player(e.requestId)
+      if (one.timer) stop($, e.requestId)
+      one.hasAutoplayed = true
+    }
     const shown = parseShown(props.output)
     if (!shown) return next(e)
 
