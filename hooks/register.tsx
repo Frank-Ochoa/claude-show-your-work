@@ -716,9 +716,11 @@ export function qaTotals(summary: Summary[] = [], checks: Check[] = []) {
 const PILL = '#30323b'
 // The sidebar's top bar, a step lighter than the sidebar.
 const TOPBAR = '#272930'
-const INNER = SIDE - 4 /* sidebar padding */
-const TITLE = INNER - 4 /* "12. " */ - 1 - 6 /* " 0:07 " */
-const LABEL = INNER - 4 /* card border + padding */ - 2 /* "✓ " */ - 5 /* " 11/11" */
+// Room for a change's title and a QA line, in a column this wide.
+const titleWidth = (column: number) => column - 4 /* "12. " */ - 1 - 6 /* " 0:07 " */
+const labelWidth = (column: number) => column - 4 /* card border + padding */ - 2 /* "✓ " */ - 5 /* " 11/11" */
+// Under the player, what changed and the QA sit side by side from this width.
+const TWO_COLUMNS = 72
 
 // Rows the sidebar spends on everything but the change rows.
 export function changesThatFit(height: number, summaryRows: number, hasPr: boolean, hasCompare: boolean) {
@@ -761,19 +763,26 @@ export function pagesOf<T>(items: { item: T; rows: number }[], rows: number): T[
   return pages
 }
 
-// The sidebar, exactly as tall as the player: the Original / Updated / Both
-// switch on top, what changed (each one jumps to its moment; the one playing
-// now is lit), the QA in a card, then the PR. Text wraps; nothing is cut.
-function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, height: number) {
+// The report: the Original / Updated / Both switch in a top bar, what changed
+// (each one jumps to its moment; the one playing now is lit), the QA in a
+// card, then the PR. Text wraps; nothing is cut. Beside the player it is a
+// sidebar exactly as tall as the player, paging what doesn't fit; under it (a
+// narrow window) it spans the player's width, in two columns when there's room.
+function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, at: { width: number; height?: number }) {
   const { Box, Text, Button } = ui
   const one = player(site)
   const media = sideOf(shown, site)
+  const { width, height } = at
+  const isBeside = height !== undefined
+  const isTwo = !isBeside && width - 4 >= TWO_COLUMNS
+  const column = isTwo ? Math.floor((width - 4 - 3) / 2) : width - 4
+  const TITLE = titleWidth(column), LABEL = labelWidth(column)
   const changes: KeyChange[] = shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : []
   const summary = (shown.summary ?? []).slice(0, 3).map(s => ({ ...s, lines: wrapWords(s.label, LABEL) }))
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
   const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
-  const room = changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink, !!shown.compare)
+  const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink, !!shown.compare) : Infinity
   const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
   const pages = pagesOf(wrapped.map(w => ({ item: w, rows: w.lines.length })), room)
   const page = Math.min(one.changesPage ?? 0, pages.length - 1)
@@ -786,67 +795,74 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
     </Box>
   )
 
+  const changed = (
+    <Box flexDirection="column" width={column}>
+      {label(
+        `WHAT CHANGED · ${changes.length}`,
+        pages.length > 1 ? (
+          <Button
+            key="changes-more"
+            plain
+            dimColor
+            label={`${page + 1}/${pages.length} ↓`}
+            onPress={() => {
+              one.changesPage = (page + 1) % pages.length
+              redraw($, site)
+            }}
+          />
+        ) : undefined,
+      )}
+      {(pages[page] ?? []).map(({ c, n, lines }) => {
+        const isLive = n === live
+        const jump = () => c.at !== undefined && seek($, site, media, c.at, shown)
+        return (
+          <Box key={`change-${n}`} flexDirection="row" gap={1}>
+            <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
+            <Box flexDirection="column" width={TITLE}>
+              {lines.map((line, i) => (
+                <Button key={`change-${n}-${i}`} plain label={line} onPress={jump} />
+              ))}
+            </Box>
+            {c.at !== undefined && (
+              <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
+                {` ${clock(c.at)} `}
+              </Text>
+            )}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+  const qa = total > 0 && (
+    <Box flexDirection="column" width={column} marginTop={isTwo ? 0 : 1}>
+      {label('QA', <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>)}
+      <Box flexDirection="column" borderStyle="round" borderColor={allPass ? 'success' : 'error'} borderDimColor paddingX={1}>
+        <Text bold color={allPass ? 'success' : 'error'}>
+          {allPass ? '✓ All checks passed' : `✗ ${total - passed} of ${total} checks failed`}
+        </Text>
+        {summary.map(s => (
+          <Box key={`sum-${s.label}`} flexDirection="row" gap={1}>
+            <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text>
+            <Box flexDirection="column" width={LABEL}>
+              {s.lines.map((line, i) => <Text key={`sum-${s.label}-${i}`}>{line}</Text>)}
+            </Box>
+            {s.total !== undefined && <Text dimColor>{`${s.passed ?? (s.ok ? s.total : 0)}/${s.total}`.padStart(5)}</Text>}
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  )
+
   return (
-    <Box flexDirection="column" width={SIDE} height={height} overflow="hidden" backgroundColor={SIDEBAR}>
+    <Box flexDirection="column" width={width} height={height} overflow="hidden" backgroundColor={SIDEBAR}>
       {shown.compare && (
-        <Box width={SIDE} backgroundColor={TOPBAR} paddingX={2} paddingY={1}>
+        <Box width={width} backgroundColor={TOPBAR} paddingX={2} paddingY={1}>
           {Tabs(ui, $, site, shown)}
         </Box>
       )}
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        {label(
-          `WHAT CHANGED · ${changes.length}`,
-          pages.length > 1 ? (
-            <Button
-              key="changes-more"
-              plain
-              dimColor
-              label={`${page + 1}/${pages.length} ↓`}
-              onPress={() => {
-                one.changesPage = (page + 1) % pages.length
-                redraw($, site)
-              }}
-            />
-          ) : undefined,
-        )}
-        {(pages[page] ?? []).map(({ c, n, lines }) => {
-          const isLive = n === live
-          const jump = () => c.at !== undefined && seek($, site, media, c.at, shown)
-          return (
-            <Box key={`change-${n}`} flexDirection="row" gap={1}>
-              <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
-              <Box flexDirection="column" width={TITLE}>
-                {lines.map((line, i) => (
-                  <Button key={`change-${n}-${i}`} plain label={line} onPress={jump} />
-                ))}
-              </Box>
-              {c.at !== undefined && (
-                <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
-                  {` ${clock(c.at)} `}
-                </Text>
-              )}
-            </Box>
-          )
-        })}
-        {total > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            {label('QA', <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>)}
-            <Box flexDirection="column" borderStyle="round" borderColor={allPass ? 'success' : 'error'} borderDimColor paddingX={1}>
-              <Text bold color={allPass ? 'success' : 'error'}>
-                {allPass ? '✓ All checks passed' : `✗ ${total - passed} of ${total} checks failed`}
-              </Text>
-              {summary.map(s => (
-                <Box key={`sum-${s.label}`} flexDirection="row" gap={1}>
-                  <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text>
-                  <Box flexDirection="column" width={LABEL}>
-                    {s.lines.map((line, i) => <Text key={`sum-${s.label}-${i}`}>{line}</Text>)}
-                  </Box>
-                  {s.total !== undefined && <Text dimColor>{`${s.passed ?? (s.ok ? s.total : 0)}/${s.total}`.padStart(5)}</Text>}
-                </Box>
-              ))}
-            </Box>
-          </Box>
-        )}
+        {changes.length > 0 && (isTwo ? <Box flexDirection="row" gap={3}>{changed}{qa}</Box> : changed)}
+        {(!isTwo || !changes.length) && qa}
         {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
       </Box>
     </Box>
@@ -1010,7 +1026,7 @@ async function Viewer(
         <Box flexDirection="row" columnGap={2}>
           {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
           {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
-          {!isWide && Tabs(ui, $, site, shown)}
+          {!isWide && !hasReport && Tabs(ui, $, site, shown)}
         </Box>
         <Box flexDirection="row" columnGap={2}>
           {opener}
@@ -1033,7 +1049,7 @@ async function Viewer(
         </Box>
         <Text dimColor>{frames ? `${media.width}×${media.height} · ${clock(frames.duration)}` : `${media.width}×${media.height}`}</Text>
       </Box>
-      {!isWide && (shown.change || prLink) && (
+      {!hasReport && prLink && (
         <Box flexDirection="row" gap={2}>
           {prLink}
           {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
@@ -1041,8 +1057,9 @@ async function Viewer(
       )}
       <Box flexDirection="row" gap={3} marginTop={1}>
         {stage}
-        {isWide && Report(ui, $, site, shown, prLink, box.rows + (frames ? 3 : 2))}
+        {isWide && Report(ui, $, site, shown, prLink, { width: SIDE, height: box.rows + (frames ? 3 : 2) })}
       </Box>
+      {!isWide && hasReport && <Box marginTop={1}>{Report(ui, $, site, shown, prLink, { width: box.columns })}</Box>}
     </Box>
   )
 }
