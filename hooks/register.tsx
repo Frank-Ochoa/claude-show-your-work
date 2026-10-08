@@ -1,0 +1,627 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
+
+import type { Check, Frames, Overlay, Shown } from '../types'
+
+const PANE = 'image-view'
+const TOOLS = ['mcp__image-view__show_image', 'mcp__image-view__show_video']
+const TMP = '/tmp/claude-image-view'
+const MARK = 'image-view:'
+const VIDEO = /\.(mp4|mov|m4v|webm|mkv|avi|gif)$/i
+// Frames a clip is cut into at most, and the rate it plays at below that.
+const MAX_FRAMES = 900
+const MAX_FPS = 12
+// The window's fill: a step lighter than a dark terminal, so it reads as one panel.
+const PANEL = '#2c2e35'
+// The QA report beside the picture, and the width the window needs for it.
+const SIDE = 34
+const WIDE_ENOUGH = 110
+const current = atom({ plugin: 'image-view', key: 'current' } as const, null)
+
+let cwd = ''
+let home = ''
+let ffmpeg = 'ffmpeg'
+let ffprobe = 'ffprobe'
+let generation = 0
+let pastedNames: string[] = []
+
+// Playback per drawn site (a transcript row's tool_use_id, or the pane).
+type Player = { frame: number; timer?: Timer; isCompare?: boolean; hasAutoplayed?: boolean }
+const players = new Map<string, Player>()
+const player = (site: string): Player => {
+  let one = players.get(site)
+  if (!one) players.set(site, (one = { frame: 0 }))
+
+  return one
+}
+
+// A typed or dragged-in path: quotes, backslash-escaped spaces and ~ allowed.
+export function expand(path: string, base: string, homeDir: string): string {
+  let p = path.trim().replace(/^(['"])(.*)\1$/, '$2').replace(/\\(.)/g, '$1')
+  if (p === '~' || p.startsWith('~/')) p = homeDir + p.slice(1)
+  if (p.startsWith('/')) return p
+
+  return `${base.replace(/\/$/, '')}/${p}`
+}
+
+export const frameFile = (frames: Frames, i: number) => `${frames.dir}/f${String(i + 1).padStart(5, '0')}.png`
+
+// How fast to sample a clip so it stays under MAX_FRAMES.
+export const sampleRate = (duration: number) =>
+  Math.max(1, Math.min(MAX_FPS, Math.floor(MAX_FRAMES / Math.max(duration, 0.1))))
+
+export const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
+
+// Finds a pasted image's original file by name with Spotlight (macOS).
+async function findPasted($: EngineInterface, name: string): Promise<string | null> {
+  if (name.startsWith('/')) return name
+  const found = await $.process.run(['mdfind', '-name', name])
+
+  return found.stdout.split('\n').find(line => line.endsWith(`/${name}`)) ?? null
+}
+
+async function pngSize($: EngineInterface, png: string) {
+  const dims = await $.process.run(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', png])
+  const width = Number(/pixelWidth:\s*(\d+)/.exec(dims.stdout)?.[1] ?? 0)
+  const height = Number(/pixelHeight:\s*(\d+)/.exec(dims.stdout)?.[1] ?? 0)
+  if (!width || !height) throw new Error(`not an image: ${png}`)
+
+  return { width, height }
+}
+
+// Cuts a clip into PNG frames the terminal can swap through.
+async function prepareVideo($: EngineInterface, real: string, title: string): Promise<Shown> {
+  const probe = await $.process.run([ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', real])
+  const duration = Number(probe.stdout.trim()) || 1
+  const fps = sampleRate(duration)
+  generation += 1
+  const dir = `${TMP}/v${generation}-${Math.floor(await $.clock.now())}`
+  await $.process.run(['mkdir', '-p', dir])
+  const cut = await $.process.run([
+    ffmpeg, '-v', 'error', '-i', real,
+    '-vf', `fps=${fps},scale='min(960,iw)':-2`,
+    '-frames:v', String(MAX_FRAMES), '-compression_level', '1', `${dir}/f%05d.png`,
+  ])
+  if (cut.exitCode !== 0) throw new Error(`ffmpeg could not read ${real}: ${cut.stderr.trim().slice(0, 200)}`)
+  const count = (await $.fs.list(dir)).filter(f => f.name.endsWith('.png')).length
+  if (!count) throw new Error(`no frames in ${real}`)
+  const frames = { dir, count, fps, duration }
+  const poster = frameFile(frames, 0)
+
+  return { kind: 'video', path: poster, source: real, ...(await pngSize($, poster)), title, generation, frames }
+}
+
+// Resolves a path to something the terminal can draw: a PNG (other image
+// formats converted with macOS `sips`), or a video's frames.
+async function prepare($: EngineInterface, raw: string, title?: string): Promise<Shown> {
+  const path = expand(raw, cwd, home)
+  const stat = await $.fs.stat(path, { resolve: true })
+  const real = stat.realPath ?? path
+  const name = title ?? real.split('/').pop()!
+  if (VIDEO.test(real)) return prepareVideo($, real, name)
+  let png = real
+  if (!/\.png$/i.test(real)) {
+    generation += 1
+    png = `${TMP}/${real.split('/').pop()!.replace(/\.[^.]+$/, '')}-${generation}.png`
+    await $.process.run(['mkdir', '-p', TMP])
+    const conv = await $.process.run(['sips', '-s', 'format', 'png', real, '--out', png])
+    if (conv.exitCode !== 0) throw new Error(`could not convert ${real}: ${conv.stderr.trim()}`)
+  }
+  generation += 1
+
+  return { kind: 'image', path: png, source: real, ...(await pngSize($, png)), title: name, generation }
+}
+
+// The tool's text result carries the shown item as `image-view:{json}`;
+// the output may be that string or a list of text blocks.
+export function parseShown(output: unknown): Shown | null {
+  const text =
+    typeof output === 'string'
+      ? output
+      : Array.isArray(output)
+        ? output.map(b => (b && typeof b === 'object' && 'text' in b ? String(b.text) : '')).join('\n')
+        : ''
+  const line = text.split('\n').find(l => l.startsWith(MARK))
+  if (!line) return null
+  try {
+    return JSON.parse(line.slice(MARK.length)) as Shown
+  } catch {
+    return null
+  }
+}
+
+// Fits the picture in a box of cells; a cell is about twice as tall as wide.
+export function fit(width: number, height: number, maxCols: number, maxRows: number) {
+  let columns = Math.max(1, Math.min(255, maxCols))
+  let rows = Math.ceil((columns * height) / width / 2)
+  if (rows > maxRows) {
+    rows = maxRows
+    columns = Math.max(1, Math.ceil((rows * 2 * width) / height))
+  }
+
+  return { columns: Math.min(255, columns), rows: Math.max(1, Math.min(255, rows)) }
+}
+
+// Sizes the picture to the room it has: between a minimum and a maximum
+// width, never taller than its share of the screen, aspect kept.
+export function sizeFor(width: number, height: number, room: number, rows: number, isPane: boolean) {
+  const maxCols = Math.max(Math.min(room, 24), Math.min(room, isPane ? 220 : 120))
+  const maxRows = isPane ? Math.max(6, rows - 12) : Math.max(8, Math.min(40, Math.floor(rows * 0.55)))
+
+  return fit(width, height, maxCols, maxRows)
+}
+
+// Maps a frame of one clip to the frame at the same moment in another.
+export function sameMoment(from: Frames | undefined, to: Frames | undefined, frame: number): number {
+  if (!from || !to) return 0
+
+  return Math.max(0, Math.min(to.count - 1, Math.round((frame / from.fps) * to.fps)))
+}
+
+// What a check did between the compared side and this one.
+export function checkDiff(now: Check[] = [], before: Check[] = []) {
+  const was = new Map(before.map(c => [c.name, c.ok]))
+  const fixed = now.filter(c => c.ok && was.get(c.name) === false)
+  const broken = now.filter(c => !c.ok && was.get(c.name) === true)
+
+  return { fixed, broken }
+}
+
+// The play control's word for where the clip is.
+export function playWord(isPlaying: boolean, frame: number, count: number) {
+  if (isPlaying) return '❚❚ Pause'
+  if (frame >= count - 1) return '↺ Replay'
+
+  return frame > 0 ? '▶ Resume' : '▶ Play'
+}
+
+const sideOf = (shown: Shown, site: string): Shown =>
+  player(site).isCompare && shown.compare ? shown.compare : shown
+
+const fileAt = (media: Shown, frame: number) =>
+  media.frames ? frameFile(media.frames, Math.min(frame, media.frames.count - 1)) : media.path
+
+function draw($: EngineInterface, site: string, media: Shown) {
+  void $.ui.blit({ requestId: site, key: 'view', source: { file: fileAt(media, player(site).frame), format: 'png' } })
+}
+
+function stop($: EngineInterface, site: string) {
+  const one = player(site)
+  one.timer?.cancel()
+  one.timer = undefined
+  $.ui.invalidate('ui.render')
+}
+
+function play($: EngineInterface, site: string, media: Shown) {
+  const one = player(site)
+  const frames = media.frames
+  if (one.timer || !frames) return
+  if (one.frame >= frames.count - 1) one.frame = 0
+  // The picture swaps every frame; the bar and the time redraw ~4 times a second.
+  const every = Math.max(1, Math.round(frames.fps / 4))
+  one.timer = $.clock.every(Math.round(1000 / frames.fps), () => {
+    if (one.frame >= frames.count - 1) return stop($, site)
+    one.frame += 1
+    draw($, site, media)
+    if (one.frame % every === 0) $.ui.invalidate('ui.render')
+  })
+  $.ui.invalidate('ui.render')
+}
+
+const toggle = ($: EngineInterface, site: string, media: Shown) =>
+  player(site).timer ? stop($, site) : play($, site, media)
+
+function seek($: EngineInterface, site: string, media: Shown, seconds: number) {
+  const frames = media.frames
+  if (!frames) return
+  player(site).frame = Math.max(0, Math.min(frames.count - 1, Math.round(seconds * frames.fps)))
+  draw($, site, media)
+  $.ui.invalidate('ui.render')
+}
+
+function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean) {
+  const one = player(site)
+  if (!shown.compare || !!one.isCompare === toCompare) return
+  const from = sideOf(shown, site)
+  const wasPlaying = !!one.timer
+  one.timer?.cancel()
+  one.timer = undefined
+  one.isCompare = toCompare
+  const to = sideOf(shown, site)
+  one.frame = sameMoment(from.frames, to.frames, one.frame)
+  draw($, site, to)
+  if (wasPlaying && to.frames) play($, site, to)
+  $.ui.invalidate('ui.render')
+}
+
+type Ui = any
+type Box = { columns: number; rows: number }
+
+// The picture, with whatever catches a click on it laid over it.
+function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: Shown, box: Box) {
+  const { Box, Text, Image, Button } = ui
+  const one = player(site)
+  const frames = media.frames
+  const overlay: Overlay = shown.overlay ?? 'center'
+  const word = frames ? playWord(!!one.timer, one.frame, frames.count) : ''
+  const centre = `${word}`
+  if (!Image) return <Text dimColor>This surface cannot draw images.</Text>
+
+  return (
+    <Box position="relative" width={box.columns} height={box.rows}>
+      <Image
+        key="view"
+        source={{ file: fileAt(media, one.frame), format: 'png', generation: media.generation }}
+        columns={box.columns}
+        rows={box.rows}
+        alt={`[${media.kind ?? 'image'}: ${shown.title} — this terminal cannot draw images]`}
+      />
+      {frames && overlay === 'grid' && (
+        <Box position="absolute" top={0} left={0} flexDirection="column">
+          {Array.from({ length: box.rows }, (_, r) => (
+            <Button key={`hit-${r}`} plain label={' '.repeat(box.columns)} onPress={() => toggle($, site, media)} />
+          ))}
+        </Box>
+      )}
+      {frames && overlay === 'center' && !one.timer && (
+        <Box position="absolute" top={Math.floor(box.rows / 2)} left={Math.max(0, Math.floor((box.columns - centre.length - 4) / 2))}>
+          <Button key="centre" variant="primary" label={centre} onPress={() => play($, site, media)} />
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// The scrub row: the play control, elapsed, a clickable bar, total — exactly
+// as wide as the picture.
+function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: number) {
+  const { Box, Text, Button } = ui
+  const one = player(site)
+  const frames = media.frames!
+  const word = playWord(!!one.timer, one.frame, frames.count)
+  const elapsed = clock(one.frame / frames.fps)
+  const total = clock(frames.duration)
+  const segments = Math.max(6, width - (word.length + 4) - elapsed.length - total.length - 4)
+  const playhead = Math.min(segments - 1, Math.round((one.frame / Math.max(1, frames.count - 1)) * (segments - 1)))
+
+  return (
+    <Box flexDirection="row" flexWrap="nowrap" width={width}>
+      <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media)} />
+      <Text dimColor> {elapsed} </Text>
+      {Array.from({ length: segments }, (_, i) => (
+        <Button
+          key={`seek-${i}`}
+          plain
+          dimColor={i > playhead}
+          label={i === playhead ? '●' : i < playhead ? '━' : '─'}
+          onPress={() => seek($, site, media, (i / (segments - 1)) * frames.duration)}
+        />
+      ))}
+      <Text dimColor> {total}</Text>
+    </Box>
+  )
+}
+
+// Live/Preview, Before/After: the side shown is the accent button.
+function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
+  const { Box, Button } = ui
+  if (!shown.compare) return null
+  const isCompare = !!player(site).isCompare
+  const name = (s: Shown, fallback: string) => {
+    const label = s.label ?? fallback
+    const passed = s.checks?.filter(c => c.ok).length
+    return s.checks?.length ? `${label} ${passed}/${s.checks.length}` : label
+  }
+
+  return (
+    <Box flexDirection="row" gap={1}>
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={name(shown.compare, 'Before')} onPress={() => flip($, site, shown, true)} />
+      <Button key="side-after" variant={isCompare ? 'secondary' : 'primary'} label={name(shown, 'After')} onPress={() => flip($, site, shown, false)} />
+    </Box>
+  )
+}
+
+// The QA report beside the picture: the change, its PR, the checks and what
+// flipped against the compared side.
+function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui) {
+  const { Box, Text } = ui
+  const media = sideOf(shown, site)
+  const checks = media.checks ?? []
+  const other = player(site).isCompare ? shown : shown.compare
+  const { fixed, broken } = checkDiff(media.checks, other?.checks)
+
+  return (
+    <Box flexDirection="column" width={SIDE}>
+      {shown.change && <Text dimColor>CHANGE</Text>}
+      {shown.change && <Text>{shown.change}</Text>}
+      {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
+      {checks.length > 0 && <Text dimColor>{'\n'}CHECKS</Text>}
+      {checks.slice(0, 12).map(c => (
+        <Text key={`c-${c.name}`} wrap="truncate-end">
+          <Text color={c.ok ? 'success' : 'error'}>{c.ok ? '✓' : '✗'}</Text> {c.name}
+        </Text>
+      ))}
+      {checks.length > 12 && <Text dimColor>+{checks.length - 12} more</Text>}
+      {other && (fixed.length > 0 || broken.length > 0) && <Text dimColor>{'\n'}VS {(other.label ?? 'BEFORE').toUpperCase()}</Text>}
+      {fixed.map(c => (
+        <Text key={`f-${c.name}`} wrap="truncate-end"><Text color="success">fixed</Text> {c.name}</Text>
+      ))}
+      {broken.map(c => (
+        <Text key={`b-${c.name}`} wrap="truncate-end"><Text color="error">broke</Text> {c.name}</Text>
+      ))}
+      {shown.compare && <Box marginTop={1}>{Tabs(ui, $, site, shown)}</Box>}
+    </Box>
+  )
+}
+
+// The player: concept A (picture, scrub row, controls) everywhere; concept B
+// (A plus the QA report at its side) when there is a report and room for it.
+function Viewer(
+  $: EngineInterface,
+  e: Parameters<EngineInterface['ui']['resolve']>[0],
+  shown: Shown,
+  site: string,
+  isPane: boolean,
+  viewport: { columns: number; rows: number } | undefined,
+) {
+  const ui = $.ui.resolve(e) as Ui
+  const { Box, Text, Button, Link } = ui
+  const one = player(site)
+  const media = sideOf(shown, site)
+  const frames = media.frames
+  const source = media.source ?? media.path
+  const columns = viewport?.columns ?? 100
+  const hasReport = !!(shown.change || shown.checks?.length)
+  const isWide = hasReport && columns - 8 >= WIDE_ENOUGH
+  const room = columns - (isPane ? 6 : 8) - (isWide ? SIDE + 3 : 0)
+  const box = sizeFor(shown.width, shown.height, room, viewport?.rows ?? 40, isPane)
+  const isNarrow = box.columns < 60
+  const checks = media.checks ?? []
+  const passed = checks.filter(c => c.ok).length
+  const prNumber = shown.pr?.match(/\/pull\/(\d+)/)?.[1]
+  const prLabel = prNumber ? `PR #${prNumber}` : shown.pr
+  const prLink = shown.pr
+    ? /^https?:\/\//.test(shown.pr)
+      ? <Link href={shown.pr} label={prLabel} />
+      : <Text color="suggestion">{prLabel}</Text>
+    : null
+  const run = (argv: string[], note: string) => () => {
+    void $.process.run(argv).then(r => $.ui.toast(r.exitCode === 0 ? note : `Could not: ${r.stderr.trim()}`))
+  }
+  // A video the agent shows starts playing by itself, once.
+  if (frames && !isPane && !one.hasAutoplayed) {
+    one.hasAutoplayed = true
+    void $.clock.sleep(400).then(() => play($, site, media))
+  }
+
+  const actions = (
+    <Box flexDirection="row" gap={2}>
+      <Button key="open" plain dimColor label="Open" onPress={run(['open', source], `Opened ${media.title}`)} />
+      {!isNarrow && <Button key="reveal" plain dimColor label="Reveal" onPress={run(['open', '-R', source], 'Revealed in Finder')} />}
+      {!isNarrow && (
+        <Button
+          key="copy"
+          plain
+          dimColor
+          label="Copy path"
+          onPress={(press: { surface: 'terminal' }) =>
+            void $.ui.copy({ text: source, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Path copied' : 'Could not copy the path'))
+          }
+        />
+      )}
+      {!isPane && (
+        <Button
+          key="full"
+          plain
+          dimColor
+          label="⤢ Full view"
+          onPress={async () => {
+            one.timer?.cancel()
+            one.timer = undefined
+            await update($, current, () => shown)
+            Object.assign(player(PANE), { frame: one.frame, isCompare: one.isCompare, hasAutoplayed: true })
+            await $.ui.open({ id: PANE, title: shown.title })
+          }}
+        />
+      )}
+    </Box>
+  )
+
+  const stage = (
+    <Box flexDirection="column" width={box.columns}>
+      {Picture(ui, $, site, shown, media, box)}
+      {frames && Scrub(ui, $, site, media, box.columns)}
+      <Box flexDirection="row" justifyContent="space-between" width={box.columns}>
+        {frames ? (
+          <Box flexDirection="row" gap={2}>
+            <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5)} />
+            <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5)} />
+            {!isWide && Tabs(ui, $, site, shown)}
+          </Box>
+        ) : (
+          (!isWide && Tabs(ui, $, site, shown)) || <Text> </Text>
+        )}
+        {actions}
+      </Box>
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="column" backgroundColor={PANEL} paddingX={2} paddingY={1}>
+      <Box flexDirection="row" justifyContent="space-between" gap={2}>
+        <Box flexDirection="row" gap={2}>
+          <Text bold wrap="truncate-end">{shown.title}</Text>
+          {checks.length > 0 && (
+            <Text bold color={passed === checks.length ? 'success' : 'error'}>
+              {passed === checks.length ? '✓' : '✗'} {passed}/{checks.length}
+            </Text>
+          )}
+        </Box>
+        <Text dimColor>{frames ? `${media.width}×${media.height} · ${clock(frames.duration)}` : `${media.width}×${media.height}`}</Text>
+      </Box>
+      {!isWide && (shown.change || prLink) && (
+        <Box flexDirection="row" gap={2}>
+          {prLink}
+          {shown.change && <Text dimColor wrap="truncate-end">{shown.change}</Text>}
+        </Box>
+      )}
+      <Box flexDirection="row" gap={3} marginTop={1}>
+        {stage}
+        {isWide && Report(ui, $, site, shown, prLink)}
+      </Box>
+    </Box>
+  )
+}
+
+const CHECKS = {
+  type: 'array',
+  description: 'For QA: the checks run, each { name, ok, at? (seconds into the clip) }',
+  items: {
+    type: 'object',
+    properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' } },
+    required: ['name', 'ok'],
+  },
+}
+
+const TOOL_INPUT = {
+  type: 'object',
+  properties: {
+    path: { type: 'string', description: 'Absolute path to the file (the "after" side when comparing)' },
+    title: { type: 'string', description: 'Short caption: what it is' },
+    change: { type: 'string', description: 'For QA: one line on what changed' },
+    pr: { type: 'string', description: 'For QA: the PR URL or number this belongs to' },
+    checks: CHECKS,
+    compare: { type: 'string', description: 'For QA: absolute path to the before version, image or video; adds Before/After tabs' },
+    compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
+    label: { type: 'string', description: 'Name of this side when comparing (default "After")' },
+    compare_label: { type: 'string', description: 'Name of the compared side (default "Before")' },
+    overlay: {
+      type: 'string',
+      enum: ['center', 'grid', 'none'],
+      description: 'How a click on a video picture plays it: a centre button (default), a click anywhere (experimental), or none',
+    },
+  },
+  required: ['path'],
+}
+
+export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    const started = await next(e)
+    cwd = started.cwd
+    const env = await $.process.run(['sh', '-lc', 'printf "%s\\n" "$HOME"; command -v ffmpeg; command -v ffprobe'])
+    const [h, ff, fp] = env.stdout.split('\n')
+    home = h ?? ''
+    ffmpeg = ff || '/opt/homebrew/bin/ffmpeg'
+    ffprobe = fp || '/opt/homebrew/bin/ffprobe'
+    // Frames are ~0.3 MB each: keep only the newest few clips' worth.
+    void $.process.run(['sh', '-c', `ls -dt ${TMP}/v* 2>/dev/null | tail -n +7 | xargs rm -rf`])
+    await $.command.register({
+      name: 'img',
+      description: 'Show an image or video in a pane: /img <path>',
+      argumentHint: '<path>',
+    })
+    await $.tool.register({
+      name: 'show_image',
+      description:
+        "Show a local image (PNG, JPEG, WebP, GIF, TIFF) inline in the user's terminal, in a player window with Open, Reveal and Copy. " +
+        "Use it unasked whenever you've made visual work the user should see: a rendered slide or page, a before/after, a chart, a mockup. " +
+        'For work that changes something, pass change, pr, checks and compare (the before file): the window adds a QA report and Before/After tabs. ' +
+        'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
+      inputSchema: TOOL_INPUT,
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: 'show_video',
+      description:
+        "Play a local video (MP4, MOV, WebM, GIF) inline in the user's terminal in a player: it starts by itself, with Play/Pause, a clickable progress bar and seek. " +
+        'Use it to show recordings you made: a Playwright run clicking through and checking a page, a rendered animation or film cut. ' +
+        'For work that changes something, pass change, pr, checks (with at = seconds) and compare (the before recording, with compare_checks): ' +
+        'the window adds a QA report, what was fixed or broke, and synced Before/After tabs. ' +
+        'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
+      inputSchema: TOOL_INPUT,
+      isDeferred: false,
+    })
+
+    return started
+  })
+
+  on('prompt.submit', ($, e, next) => {
+    pastedNames = (e.attachments ?? []).filter(a => a.type === 'image' && a.filename).map(a => a.filename!)
+
+    return next(e)
+  })
+
+  on('command.run', { command: 'img' }, async ($, e) => {
+    let arg = e.args.trim()
+    if (/^\[Image #\d+\]$/.test(arg) || (!arg && pastedNames.length > 0)) {
+      const name = pastedNames.at(-1)
+      const found = name ? await findPasted($, name) : null
+      if (!found) {
+        return {
+          text: 'Pasted images reach Claude, not mods, so /img cannot read one. Drag the file into the prompt (that types its path) or type the path: /img ~/path/to/file.png',
+        }
+      }
+      arg = found
+    }
+    if (!arg) return { text: 'Usage: /img <path>' }
+    try {
+      const shown = await prepare($, arg)
+      stop($, PANE)
+      Object.assign(player(PANE), { frame: 0, isCompare: false, hasAutoplayed: true })
+      await update($, current, () => shown)
+      await $.ui.open({ id: PANE, title: shown.title })
+
+      return { text: `Showing ${shown.title} (${shown.width}×${shown.height}).` }
+    } catch (err) {
+      return { text: `Could not show it: ${(err as Error).message.replace(/^.*?failed: ENOENT$/, 'no such file')}` }
+    }
+  })
+
+  on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
+    const input = e as unknown as {
+      path?: string; title?: string; change?: string; pr?: string; checks?: Check[]
+      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
+    }
+    if (!input.path) return { deny: 'A path is needed.' }
+    try {
+      const shown: Shown = {
+        ...(await prepare($, input.path, input.title)),
+        change: input.change,
+        pr: input.pr,
+        checks: input.checks,
+        label: input.label,
+        overlay: input.overlay,
+      }
+      if (input.compare) {
+        shown.compare = {
+          ...(await prepare($, input.compare, input.compare_label ?? 'Before')),
+          label: input.compare_label,
+          checks: input.compare_checks,
+        }
+      }
+      const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.width}×${shown.height}`
+
+      return { result: `Shown to the user: ${shown.title} (${what}).\n${MARK}${JSON.stringify(shown)}` }
+    } catch (err) {
+      return { deny: `image-view: ${(err as Error).message}` }
+    }
+  }).catch(() => ({ deny: 'image-view: it could not be shown.' }))
+
+  // Inline in the transcript: the player is the tool's result row.
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    const props = e.props as { tool: string; output: unknown; isErrored: boolean }
+    if (!TOOLS.includes(props.tool) || props.isErrored) return next(e)
+    const shown = parseShown(props.output)
+    if (!shown) return next(e)
+
+    return Viewer($, e, shown, e.requestId, false, e.viewport)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    const shown = await read($, current)
+    if (!shown) return <Text dimColor>Nothing to show yet. Run /img path/to/file</Text>
+
+    return Viewer($, e, shown, PANE, true, e.viewport)
+  })
+}

@@ -1,0 +1,5 @@
+{
+  "name": "umer-mods",
+  "owner": { "name": "Umer Ansari" },
+  "plugins": [{ "name": "image-view", "source": "./" }]
+}

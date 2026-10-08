@@ -1,0 +1,1 @@
+{ "name": "image-view", "version": "0.1.0", "description": "Show PNG/JPEG/WebP images inline in the terminal (kitty/Ghostty graphics)", "types": "./types/index.d.ts" }
