@@ -46,6 +46,15 @@ type Player = {
 const players = new Map<string, Player>()
 // Calls made since this load: only these autoplay, not every window a reload redraws.
 const freshCalls = new Set<string>()
+// The newest windows stay open; older ones fold to one line so scrolling the
+// chat doesn't redraw pictures. Opened by hand: stays open.
+const OPEN_NEWEST = 2
+const recentCalls: string[] = []
+const openedByHand = new Set<string>()
+
+export function isOpen(site: string, recent: string[], byHand: Set<string>, keep = OPEN_NEWEST) {
+  return byHand.has(site) || recent.slice(-keep).includes(site)
+}
 const player = (site: string): Player => {
   let one = players.get(site)
   if (!one) players.set(site, (one = { frame: 0 }))
@@ -799,6 +808,33 @@ function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: 
   )
 }
 
+// An older window, folded to one line: what it is, and a button to open it.
+function Folded($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], shown: Shown, site: string) {
+  const { Box, Text, Button } = $.ui.resolve(e) as Ui
+  const one = player(site)
+  if (one.timer) stop($, site)
+  const what = shown.frames ? `video · ${clock(shown.frames.duration)}` : `image · ${shown.width}×${shown.height}`
+  const words = resultWords(shown.checks)
+
+  return (
+    <Box flexDirection="row" gap={2} borderStyle="round" borderColor="subtle" paddingX={1}>
+      <Button
+        key="unfold"
+        plain
+        label="▸ Show"
+        onPress={() => {
+          openedByHand.add(site)
+          $.ui.invalidate('ui.render')
+        }}
+      />
+      <Text bold wrap="truncate-end">{shown.title}</Text>
+      <Text dimColor>{what}</Text>
+      {shown.compare && <Text dimColor>· original vs updated</Text>}
+      {words && <Text color={(shown.checks ?? []).every(c => c.ok) ? 'success' : 'error'}>· {words}</Text>}
+    </Box>
+  )
+}
+
 // The player: concept A (picture, scrub row, controls) everywhere; concept B
 // (A plus the QA report at its side) when there is a report and room for it.
 async function Viewer(
@@ -1135,6 +1171,7 @@ export const register: Register = on => {
 
   on('tool.call', { tool: /^mcp__image-view__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
+    recentCalls.push(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
@@ -1187,6 +1224,7 @@ export const register: Register = on => {
     }
     const shown = parseShown(props.output)
     if (!shown) return next(e)
+    if (!isOpen(e.requestId, recentCalls, openedByHand)) return Folded($, e, shown, e.requestId)
 
     return Viewer($, e, shown, e.requestId, false, e.viewport)
   })

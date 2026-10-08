@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { changeAt, checkDiff, resultWords, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { changeAt, checkDiff, isOpen, resultWords, resumeCommand, isScratch, notesPrompt, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -122,4 +122,13 @@ test('check results read as words', () => {
   expect(resultWords([{ name: 'a', ok: false }])).toBe('1 check fails')
   expect(resultWords([{ name: 'a', ok: true }, { name: 'b', ok: true }])).toBe('all 2 checks pass')
   expect(resultWords([])).toBe('')
+})
+
+test('only the newest windows stay open, unless opened by hand', () => {
+  const recent = ['a', 'b', 'c', 'd']
+  expect(isOpen('d', recent, new Set())).toBe(true)
+  expect(isOpen('c', recent, new Set())).toBe(true)
+  expect(isOpen('a', recent, new Set())).toBe(false)
+  expect(isOpen('a', recent, new Set(['a']))).toBe(true)
+  expect(isOpen('x', [], new Set())).toBe(false)
 })
