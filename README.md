@@ -139,4 +139,4 @@ Edit `hooks/register.tsx`, then `/reload-plugins`. Check with `claude plugin val
 
 ---
 
-<sub>Demo photography from <a href="https://unsplash.com">Unsplash</a>, used under the Unsplash License. Header background: credit to its artist to be added before public release.</sub>
+<sub>Photography from <a href="https://unsplash.com">Unsplash</a>, used under the Unsplash License.</sub>
