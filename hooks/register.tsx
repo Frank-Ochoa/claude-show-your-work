@@ -38,6 +38,10 @@ type Player = {
   step?: number
   // the sidebar lists the versions instead of what changed
   isHistory?: boolean
+  // scrolled out of view since it was last drawn
+  wasAway?: boolean
+  // back in view: send the frame on screen again after drawing
+  resend?: boolean
   hasAutoplayed?: boolean
   // how many bar cells the scrub row last drew, so playback redraws only on a change
   segments?: number
@@ -1752,18 +1756,31 @@ export const register: Register = on => {
     const props = e.props as { tool: string; output: unknown; isErrored: boolean; onScreen?: unknown }
     if (!TOOLS.includes(props.tool) || props.isErrored) return next(e)
     // Scrolled out of view: stop playing, and don't start there.
+    const one = player(e.requestId)
     if (props.onScreen === null) {
-      const one = player(e.requestId)
       if (one.timer) stop($, e.requestId)
       one.hasAutoplayed = true
+      one.wasAway = true
+    } else if (one.wasAway && props.onScreen) {
+      // Back in view: draw it fresh. The terminal may have dropped the picture
+      // and the cache its frame; the redraw decodes the frame again if needed.
+      one.wasAway = false
+      versions.set(e.requestId, (versions.get(e.requestId) ?? 0) + 1)
+      one.resend = true
     }
     const key = `${version}|${versions.get(e.requestId) ?? 0}|${e.viewport?.columns ?? 0}|${e.viewport?.rows ?? 0}`
     const kept = drawn.get(e.requestId)
     if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
     const shown = parseShown(props.output)
     if (!shown) return next(e)
-    const tree = await Viewer($, e, atStep(shown, e.requestId), e.requestId, false, e.viewport)
+    const view = atStep(shown, e.requestId)
+    const tree = await Viewer($, e, view, e.requestId, false, e.viewport)
     drawn.set(e.requestId, { key, tree })
+    // As the play button does: send the frame on screen to the terminal again.
+    if (one.resend) {
+      one.resend = false
+      void $.clock.sleep(120).then(() => draw($, e.requestId, sideOf(view, e.requestId), view)).catch(() => undefined)
+    }
 
     return tree
   })
