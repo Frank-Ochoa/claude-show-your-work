@@ -139,14 +139,45 @@ export function shiftTimes<T extends { at?: number }>(list: T[] | undefined, lea
 }
 
 // Cuts a clip into PNG frames the terminal can swap through.
-async function prepareVideo($: EngineInterface, real: string, title: string): Promise<Shown> {
+// A file as it is now: its path, size and modified time. The same unchanged
+// file shown again maps to the same frames folder and skips the decode; a
+// re-rendered one gets a new key and decodes fresh.
+export function keyOf(text: string): string {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0
+  return h.toString(16).padStart(8, '0') + text.length.toString(16)
+}
+async function identityOf($: EngineInterface, raw: string): Promise<string | undefined> {
+  const st = await $.fs.stat(expand(raw, cwd, home), { resolve: true }).catch(() => null)
+  return st ? keyOf(`${st.realPath ?? raw}|${st.size}|${st.mtimeMs}`) : undefined
+}
+async function readMeta<T>($: EngineInterface, dir: string): Promise<T | null> {
+  const r = await $.process.run(['cat', `${dir}/meta.json`]).catch(() => null)
+  if (!r || r.exitCode !== 0) return null
+  try { return JSON.parse(r.stdout) as T } catch { return null }
+}
+const writeMeta = ($: EngineInterface, dir: string, meta: unknown) =>
+  $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0/meta.json"', dir, JSON.stringify(meta)]).catch(() => undefined)
+
+async function prepareVideo($: EngineInterface, real: string, title: string, key?: string): Promise<Shown> {
+  // The same file shown before: its folder, frames and size are already there.
+  if (key) {
+    const dir = `${TMP}/v-${key}`
+    const meta = await readMeta<{ frames: Omit<Frames, 'dir'>; width: number; height: number }>($, dir)
+    if (meta) {
+      const frames = { ...meta.frames, dir }
+      await $.process.run(['touch', dir]).catch(() => undefined)
+      await ensureChunk($, frames, real, 0)
+      return { kind: 'video', path: frameFile(frames, 0), source: real, width: meta.width, height: meta.height, title, generation: ++generation, frames }
+    }
+  }
   const probe = await $.process.run([ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', real])
   // Some recordings (MediaRecorder webm) carry no duration: sample those at the
   // top rate. The clip's length is then what the frames cover.
   const probed = Number(probe.stdout.trim())
   const fps = sampleRate(Number.isFinite(probed) && probed > 0 ? probed : 1)
   generation += 1
-  const dir = `${TMP}/v${generation}-${Math.floor(await $.clock.now())}`
+  const dir = key ? `${TMP}/v-${key}` : `${TMP}/v${generation}-${Math.floor(await $.clock.now())}`
   await $.process.run(['mkdir', '-p', dir])
   const lead = await whiteLead($, real, probed)
   const known = Number.isFinite(probed) && probed > 0
@@ -165,8 +196,10 @@ async function prepareVideo($: EngineInterface, real: string, title: string): Pr
   const frames = { dir, count, fps, duration: count / fps, ...(lead ? { lead } : {}) }
   const poster = frameFile(frames, 0)
 
+  const size = await pngSize($, poster)
+  if (key) await writeMeta($, dir, { frames: { count, fps, duration: frames.duration, ...(lead ? { lead } : {}) }, ...size })
   void trimFrames($)
-  return { kind: 'video', path: poster, source: real, ...(await pngSize($, poster)), title, generation, frames }
+  return { kind: 'video', path: poster, source: real, ...size, title, generation, frames }
 }
 
 // Frames are decoded from the clip as it plays, two seconds at a time: the
@@ -199,18 +232,34 @@ function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, 
   return job
 }
 
-// Keeps chunks c-1 to c+2 of a frames folder, and the poster.
-function prune($: EngineInterface, dir: string, c: number) {
-  return $.process.run(['sh', '-c',
-    'cd "$0" 2>/dev/null || exit 0; ls | awk -v lo="$1" -v hi="$2" \'/^f[0-9]+\\.png$/ { n = substr($0, 2, 5) + 0; if (n > 1 && (n <= lo || n > hi)) print }\' | xargs rm -f',
-    dir, String(Math.max(0, (c - 1) * CHUNK)), String((c + 3) * CHUNK)]).catch(() => undefined)
+// Where each player is in each frames folder, as a chunk number.
+const watching = new Map<string, Map<string, number>>()
+function watch(dir: string, site: string, i: number) {
+  let at = watching.get(dir)
+  if (!at) watching.set(dir, (at = new Map()))
+  at.set(site, Math.floor(i / CHUNK))
+}
+
+// Keeps, in a frames folder, chunks c-1 to c+2 around the chunk just made
+// and around every player on that folder, and the poster.
+async function prune($: EngineInterface, dir: string, c: number) {
+  const keep = [c, ...(watching.get(dir)?.values() ?? [])]
+  const files = await $.fs.list(dir).catch(() => [])
+  const gone = files.map(f => f.name).filter(name => {
+    const m = /^f(\d+)\.png$/.exec(name)
+    if (!m) return false
+    const i = Number(m[1]) - 1
+    return i > 0 && !keep.some(k => i >= (k - 1) * CHUNK && i < (k + 3) * CHUNK)
+  })
+  if (gone.length) await $.process.run(['rm', '-f', ...gone.map(n => `${dir}/${n}`)]).catch(() => undefined)
 }
 
 // The frame a side shows, decoded if it has to be; past the middle of a
 // chunk, the next one starts decoding so playback never waits.
-async function frameReady($: EngineInterface, media: Shown, i: number): Promise<void> {
+async function frameReady($: EngineInterface, media: Shown, i: number, site?: string): Promise<void> {
   const f = media.frames
   if (!f) return
+  if (site) watch(f.dir, site, i)
   await ensureChunk($, f, media.source, i)
   if (i % CHUNK >= CHUNK / 2 && i + CHUNK < f.count) void ensureChunk($, f, media.source, i + CHUNK)
 }
@@ -349,18 +398,29 @@ const PAIR_GAP = 40
 async function preparePair($: EngineInterface, original: Shown, updated: Shown) {
   const f = updated.frames!, g = original.frames!
   generation += 1
-  const dir = `${TMP}/p${generation}-${Math.floor(await $.clock.now())}`
+  const dir = `${TMP}/p-${keyOf(f.dir + '|' + g.dir)}`
+  type PairMeta = { pair: Omit<Frames, 'dir'>; pairWidth: number; pairHeight: number; sync: [number, number][] }
+  const known = await readMeta<PairMeta>($, dir)
+  if (known) {
+    const pair = { ...known.pair, dir }
+    await $.process.run(['touch', dir]).catch(() => undefined)
+    await pairChunk($, pair, updated, original, i => compareFrame({ ...updated, compare: original, sync: known.sync }, i), 0)
+    return { pair, pairWidth: known.pairWidth, pairHeight: known.pairHeight, sync: known.sync }
+  }
   const stride = strideFor(f.count, g.count)
   const [ta, tb] = await Promise.all([thumbs($, updated, stride), thumbs($, original, stride)])
   const match = ta.length && tb.length
     ? spreadMatch(matchOf(align(ta, tb), ta.length), stride, f.count, g.count - 1)
     : Array.from({ length: f.count }, (_, i) => Math.min(g.count - 1, Math.round(mapTime(anchors(updated.checks, original.checks), i / f.fps, f.duration, g.duration) * g.fps)))
+  await $.process.run(['mkdir', '-p', dir])
   const pair = { dir, count: f.count, fps: f.fps, duration: f.duration }
   await pairChunk($, pair, updated, original, i => match[i] ?? 0, 0)
   if (!(await exists($, frameFile(pair, 0)))) return null
   const size = await pngSize($, frameFile(pair, 0))
+  const made = { pair, pairWidth: size.width, pairHeight: size.height, sync: turns(match, f.fps, g.fps) }
+  await writeMeta($, dir, { ...made, pair: { count: pair.count, fps: pair.fps, duration: pair.duration } })
 
-  return { pair, pairWidth: size.width, pairHeight: size.height, sync: turns(match, f.fps, g.fps) }
+  return made
 }
 
 // One chunk of the merged clip, Original left and Updated right, made from
@@ -394,9 +454,10 @@ function pairChunk($: EngineInterface, pair: Frames, updated: Shown, original: S
 }
 
 // The merged frame on screen, made if it has to be, the next chunk ahead.
-async function pairReady($: EngineInterface, shown: Shown, i: number): Promise<void> {
+async function pairReady($: EngineInterface, shown: Shown, i: number, site?: string): Promise<void> {
   const pair = shown.pair
   if (!pair || !shown.compare) return
+  if (site) watch(pair.dir, site, i)
   const jOf = (k: number) => compareFrame(shown, k)
   await pairChunk($, pair, shown, shown.compare, jOf, i)
   if (i % CHUNK >= CHUNK / 2 && i + CHUNK < pair.count) void pairChunk($, pair, shown, shown.compare, jOf, i + CHUNK)
@@ -404,12 +465,12 @@ async function pairReady($: EngineInterface, shown: Shown, i: number): Promise<v
 
 // Resolves a path to something the terminal can draw: a PNG (other image
 // formats converted with macOS `sips`), or a video's frames.
-async function prepare($: EngineInterface, raw: string, title?: string): Promise<Shown> {
+async function prepare($: EngineInterface, raw: string, title?: string, key?: string): Promise<Shown> {
   const path = expand(raw, cwd, home)
   const stat = await $.fs.stat(path, { resolve: true })
   const real = stat.realPath ?? path
   const name = title ?? real.split('/').pop()!
-  if (VIDEO.test(real)) return prepareVideo($, real, name)
+  if (VIDEO.test(real)) return prepareVideo($, real, name, key ?? (await identityOf($, real)))
   let png = real
   if (!/\.png$/i.test(real)) {
     generation += 1
@@ -625,17 +686,17 @@ function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   const one = player(site)
   if (one.isSplit && shown?.pair) {
     const at = Math.min(one.frame, shown.pair.count - 1), pair = shown.pair
-    void pairReady($, shown, at).then(() => blit($, site, 'view-pair', shown, frameFile(pair, at), at)).catch(() => undefined)
+    void pairReady($, shown, at, site).then(() => blit($, site, 'view-pair', shown, frameFile(pair, at), at)).catch(() => undefined)
     return
   }
   if (one.isSplit && shown?.compare) {
     const at = compareFrame(shown, one.frame), compare = shown.compare, frame = one.frame
-    void frameReady($, compare, at).then(() => blit($, site, 'view-a', compare, plainAt(compare, at), at)).catch(() => undefined)
-    void frameReady($, shown, frame).then(() => blit($, site, 'view-b', shown, plainAt(shown, frame), frame)).catch(() => undefined)
+    void frameReady($, compare, at, site).then(() => blit($, site, 'view-a', compare, plainAt(compare, at), at)).catch(() => undefined)
+    void frameReady($, shown, frame, site).then(() => blit($, site, 'view-b', shown, plainAt(shown, frame), frame)).catch(() => undefined)
     return
   }
   const frame = one.frame
-  void frameReady($, media, frame).then(() => blit($, site, 'view', media, plainAt(media, frame), frame)).catch(() => undefined)
+  void frameReady($, media, frame, site).then(() => blit($, site, 'view', media, plainAt(media, frame), frame)).catch(() => undefined)
 }
 
 // A side's checks in words: "4 checks fail" or "all 11 checks pass".
@@ -1274,7 +1335,7 @@ async function Viewer(
     return Warning(ui, $, site, shown, columns - 8)
   }
   one.box = { columns: box.columns, rows: box.rows }
-  await frameReady($, media, one.frame)
+  await frameReady($, media, one.frame, site)
   const pic = await picFor($, plainAt(media, one.frame), box)
   probe($, site, 'view', pic)
   if (one.isSplit && shown.pair && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)
@@ -1367,7 +1428,7 @@ async function SplitView(
   const change = changeAt(shown, seconds)
   const { fixed, broken } = checkDiff(shown.checks, before.checks)
   one.box = { columns: box.columns, rows: box.rows }
-  await pairReady($, shown, Math.min(one.frame, pair.count - 1))
+  await pairReady($, shown, Math.min(one.frame, pair.count - 1), site)
   const pic = await picFor($, frameFile(pair, Math.min(one.frame, pair.count - 1)), box)
   probe($, site, 'view-pair', pic)
   const head = (s: Shown, fallback: string, w: number) => {
@@ -1582,7 +1643,7 @@ export const register: Register = on => {
       const earlier = VIDEO.test(input.path) ? kept.earlier : [...given, ...kept.earlier.filter(k => !given.some(g => g.path === k.path))]
       const compare = input.compare ?? earlier.at(-1)?.path
       const shown: Shown = {
-        ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop())),
+        ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop(), await identityOf($, input.path))),
         origin: kept.real,
         change: input.change,
         pr: input.pr,

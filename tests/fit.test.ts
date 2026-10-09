@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -222,4 +222,10 @@ test('a white opening is found and the times move with it', () => {
   expect(leadFrom('[blackdetect @ 0x1] black_start:0 black_end:12 black_duration:12', 12)).toBe(0)
   expect(leadFrom('', 12)).toBe(0)
   expect(shiftTimes([{ title: 'a', at: 2 }, { title: 'b' }, { title: 'c', at: 0.3 }], 0.64)).toEqual([{ title: 'a', at: 1.36 }, { title: 'b' }, { title: 'c', at: 0 }])
+})
+
+test('a file version keys one frames folder', () => {
+  expect(keyOf('/a.mp4|10|1')).toBe(keyOf('/a.mp4|10|1'))
+  expect(keyOf('/a.mp4|10|1')).not.toBe(keyOf('/a.mp4|10|2'))
+  expect(keyOf('/a.mp4|10|1')).toMatch(/^[0-9a-f]+$/)
 })
