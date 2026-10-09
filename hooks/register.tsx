@@ -968,6 +968,16 @@ function pickVersion($: EngineInterface, site: string, shown: Shown, to: number)
   }).catch(() => $.ui.toast('That version is gone'))
 }
 
+// With history, which version is on screen, in words: "viewing v1 of 3".
+function viewingLabel(shown: Shown, site: string): string {
+  const history = shown.history
+  if (!history || history.length < 2) return ''
+  const one = player(site)
+  const total = history.length + 1
+  const at = one.isCompare ? (one.step ?? shown.historyAt ?? history.length - 1) + 1 : total
+  return at === total ? `· latest, v${total}` : `· viewing v${at} of ${total}`
+}
+
 // A tab name short enough that every tab fits on one line and stays clickable.
 export const tabLabel = (text: string, max = 12) => (text.length > max ? text.slice(0, max - 1).trimEnd() + '…' : text)
 
@@ -987,7 +997,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
 
   return (
     <Box flexDirection="row" gap={1}>
-      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? 'Original')} onPress={pick(true)} />
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? (hasSteps ? 'Earlier' : 'Original'))} onPress={pick(true)} />
       <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={tabLabel(shown.label ?? 'Updated')} onPress={pick(false)} />
       {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Compare" onPress={() => split($, site, shown, !isBoth)} />}
       {hasSteps && (
@@ -1200,7 +1210,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
             </Box>
             {(isOn || isLatest) && (
               <Text backgroundColor={isOn ? 'suggestion' : PILL} color={isOn ? 'inverseText' : undefined}>
-                {isLatest ? ' now ' : ' on '}
+                {isOn ? ' viewing ' : ' latest '}
               </Text>
             )}
           </Box>
@@ -1461,6 +1471,7 @@ async function Viewer(
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" gap={2} flexShrink={1}>
           <Text bold wrap="truncate-end">{shown.title}</Text>
+          {viewingLabel(shown, site) && <Text color="suggestion" wrap="truncate-end">{viewingLabel(shown, site)}</Text>}
           {checks.length > 0 && (
             <Text bold color={passed === checks.length ? 'success' : 'error'}>
               {passed === checks.length ? '✓' : '✗'} {passed}/{checks.length}
