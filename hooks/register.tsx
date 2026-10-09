@@ -895,7 +895,7 @@ export function barChunks(segments: number, playhead: number, count = 20) {
   return chunks
 }
 
-// Original / Updated / Both side by side: the view shown is the accent button.
+// Original / Updated / Compare (side by side): the view shown is the accent button.
 // The compared side when it is one of several earlier versions: the one
 // before by default, with ‹ › to step further back. Versions are numbered
 // from the first one shown, so the updated side is the highest.
@@ -956,7 +956,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
     <Box flexDirection="row" gap={1}>
       <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? 'Original')} onPress={pick(true)} />
       <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={tabLabel(shown.label ?? 'Updated')} onPress={pick(false)} />
-      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
+      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Compare" onPress={() => split($, site, shown, !isBoth)} />}
       {hasSteps && (
         <Button key="history" variant={one.isHistory ? 'primary' : 'secondary'} label={`History · ${shown.history!.length + 1}`}
           onPress={() => { one.isHistory = !one.isHistory; one.changesPage = 0; redraw($, site) }} />
@@ -1062,7 +1062,7 @@ export function pagesOf<T>(items: { item: T; rows: number }[], rows: number): T[
   return pages
 }
 
-// The report: the Original / Updated / Both switch in a top bar, what changed
+// The report: the Original / Updated / Compare switch in a top bar, what changed
 // (each one jumps to its moment; the one playing now is lit), the QA in a
 // card, then the PR. Text wraps; nothing is cut. Beside the player it is a
 // sidebar exactly as tall as the player, paging what doesn't fit; under it (a
@@ -1619,7 +1619,7 @@ export const register: Register = on => {
         "Use it unasked whenever you've made visual work the user should see: a rendered page or slide, a chart, a mockup. " +
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
-        'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
+        'reviews with (what changed, QA, Original/Updated/Compare). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
         'Name files after what they show (<project>-<thing>-<view>, e.g. tern-landing-hero.png; never out.png, check.png or hero.png) and pass `design`, a stable id for that design, the same on every iteration: its versions then group under History and the one before becomes Original. Pass `compare` to pick a different before. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
@@ -1633,7 +1633,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, each with `at` = the second it shows in the clip), ' +
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
-        '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
+        '(what changed, QA, Original/Updated/Compare, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
         'Name files after what they show (<project>-<thing>-<view>, e.g. tern-landing-hero.png; never out.png, check.png or hero.png) and pass `design`, a stable id for that design, the same on every iteration: its versions then group under History and the one before becomes Original. Pass `compare` to pick a different before. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,

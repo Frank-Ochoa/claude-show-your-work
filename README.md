@@ -39,7 +39,7 @@ Claude **shows its work** in the conversation, the moment it's done:
 |---|---|
 | 🖼 **Pictures in the chat** | A page, a slide, a chart, a mockup: it appears inline, unasked. |
 | ▶️ **Videos in the chat** | Claude records itself clicking through your app (Playwright, headless) and the run plays right there, by itself. |
-| ⧉ **Before / after QA** | The same flow on the original and the updated version. Switch **Original / Updated / Both**; Both plays them side by side, synced. |
+| ⧉ **Before / after QA** | The same flow on the original and the updated version. Switch **Original / Updated / Compare**; Compare plays them side by side, synced. |
 | ✅ **What changed + QA at a glance** | Each change with its timestamp (click to jump there), and the QA in three lines with a tick or cross. |
 
 ## What you see
@@ -48,7 +48,7 @@ Claude **shows its work** in the conversation, the moment it's done:
 
 The player above: Play/Pause, a clickable progress bar, ±5 s. The sidebar lists **what changed**; click one and the video jumps to that moment, and the one playing now lights up. The **QA** card sums up the checks in three lines.
 
-Click **⧉ Both** and the original and updated runs play side by side. They're lined up by matching their frames, so when the original takes longer to load, it waits, and every step happens at the same moment on both sides. Under the picture, a line says what differs right now: `0:03 · Annual toggle updates prices · Original ✗ → Updated ✓`.
+Click **⧉ Compare** and the original and updated runs play side by side. They're lined up by matching their frames, so when the original takes longer to load, it waits, and every step happens at the same moment on both sides. Under the picture, a line says what differs right now: `0:03 · Annual toggle updates prices · Original ✗ → Updated ✓`.
 
 ### Pictures, the moment they're ready
 
@@ -64,7 +64,7 @@ One row of controls under every picture and video:
 
 <img align="right" src="docs/narrow.jpg" alt="In a narrow window the report moves under the player, in two columns" width="42%">
 
-In a narrow window the report moves **under** the player instead of beside it: the Original / Updated / Both switch on top, then what changed and the QA in two columns (one, if it's narrower still). Nothing is cut off; long titles wrap.
+In a narrow window the report moves **under** the player instead of beside it: the Original / Updated / Compare switch on top, then what changed and the QA in two columns (one, if it's narrower still). Nothing is cut off; long titles wrap.
 
 Every window stays in the chat, too. Scroll up and every picture and video Claude showed you is still there.
 
