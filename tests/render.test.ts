@@ -49,3 +49,20 @@ test('a narrow window shows the report under the player', async $ => {
     expect(tree.includes('All checks passed')).toBe(true)
   }
 })
+
+test('a picture with earlier versions draws with the version row', async $ => {
+  const pic = { kind: 'image', path: '/tmp/a.png', source: '/tmp/a.png', width: 1600, height: 1060, title: 'Hero', generation: 1 }
+  const withHistory = { ...pic, changes: [{ title: 'Centred the play button' }], compare: { ...pic, title: 'Original' }, history: ['/tmp/v1.png', '/tmp/v2.png'] }
+  for (const columns of [160, 90]) {
+    const output = `Shown.\nshow-your-work:${JSON.stringify(withHistory)}`
+    const target = {
+      plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: `h-${columns}`,
+      props: { tool_use_id: `h-${columns}`, tool: 'mcp__image-view__show_image', output, isErrored: false },
+      viewport: { columns, rows: 50 },
+    } as any
+    const mounted = await $.ui.mount(target)
+    const tree = JSON.stringify(await mounted.drawn())
+    expect(tree.includes('Version')).toBe(true)
+    expect(tree.includes('"Image"')).toBe(true)
+  }
+})

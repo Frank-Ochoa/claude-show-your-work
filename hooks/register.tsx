@@ -741,7 +741,9 @@ function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
       <Text dimColor>Version</Text>
       {first > 0 && <Text dimColor>…</Text>}
       {Array.from({ length: latest - first + 1 }, (_, k) => first + k).map(i => (
-        <Button key={`v-${i}`} plain={i !== on} variant={i === on ? 'primary' : 'secondary'} label={`${i + 1}`} onPress={go(i)} />
+        i === on
+          ? <Button key={`v-${i}`} variant="primary" label={`${i + 1}`} onPress={go(i)} />
+          : <Button key={`v-${i}`} plain label={`${i + 1}`} onPress={go(i)} />
       ))}
     </Box>
   )
