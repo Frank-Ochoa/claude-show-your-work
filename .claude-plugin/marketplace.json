@@ -1,5 +1,12 @@
 {
-  "name": "show-your-work",
-  "owner": { "name": "Umer Ansari" },
-  "plugins": [{ "name": "show-your-work", "source": "./" }]
+  "name": "iamumeransari",
+  "owner": {
+    "name": "Umer Ansari"
+  },
+  "plugins": [
+    {
+      "name": "show-your-work",
+      "source": "./"
+    }
+  ]
 }

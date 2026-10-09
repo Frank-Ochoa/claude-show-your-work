@@ -74,7 +74,7 @@ Every window stays in the chat, too. Scroll up and every picture and video Claud
 
 ```
 /plugin marketplace add iamumeransari/claude-show-your-work
-/plugin install show-your-work@show-your-work
+/plugin install show-your-work@iamumeransari
 ```
 
 **Needs**
