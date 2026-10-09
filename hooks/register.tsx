@@ -184,7 +184,8 @@ function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, 
   if (running) return running
   const job = (async () => {
     const first = c * CHUNK
-    if (await exists($, frameFile(f, first))) return
+    // The frame asked for, not the chunk's first: the poster outlives its chunk.
+    if (await exists($, frameFile(f, Math.max(0, Math.min(i, f.count - 1))))) return
     if (!source) return
     await $.process.run(['mkdir', '-p', f.dir])
     await $.process.run([
@@ -372,7 +373,7 @@ function pairChunk($: EngineInterface, pair: Frames, updated: Shown, original: S
   const f = updated.frames!, g = original.frames!
   const job = (async () => {
     const first = c * CHUNK, n = Math.min(CHUNK, pair.count - first)
-    if (await exists($, frameFile(pair, first))) return
+    if (await exists($, frameFile(pair, Math.max(0, Math.min(i, pair.count - 1))))) return
     const js = Array.from({ length: n }, (_, k) => Math.max(0, Math.min(g.count - 1, jOf(first + k))))
     await ensureChunk($, f, updated.source, first)
     for (const jc of new Set(js.map(j => Math.floor(j / CHUNK)))) await ensureChunk($, g, original.source, jc * CHUNK)
