@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -184,4 +184,13 @@ test('a change lights when a seek lands just before it', () => {
 test('checks without a time never claim 0:00', () => {
   const shown = { path: '/a', width: 1, height: 1, title: 'a', generation: 1, checks: [{ name: 'x', ok: true }], compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'x', ok: false }] } }
   expect(changeAt(shown, 5)).toBe(null)
+})
+
+test('times only stay when they point somewhere', () => {
+  const same = [{ title: 'a', at: 3 }, { title: 'b', at: 3 }]
+  expect(timesThatMean(same, true)!.every(c => c.at === undefined)).toBe(true)
+  expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], true)!.map(c => c.at)).toEqual([1, 4])
+  expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], false)!.every(c => c.at === undefined)).toBe(true)
+  expect(timesThatMean([{ title: 'a', at: 2 }], true)![0].at).toBe(2)
+  expect(timesThatMean(undefined, true)).toBeUndefined()
 })

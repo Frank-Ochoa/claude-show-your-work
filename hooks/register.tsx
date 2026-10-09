@@ -315,6 +315,17 @@ async function prepare($: EngineInterface, raw: string, title?: string): Promise
   return { kind: 'image', path: png, source: real, ...(await pngSize($, png)), title: name, generation }
 }
 
+// A time is only worth a click when it points somewhere: a picture has no
+// timeline, and a clip where every change sits at the same second isn't
+// pointing anywhere either. Those rows are plain text.
+export function timesThatMean(changes: KeyChange[] | undefined, isVideo: boolean): KeyChange[] | undefined {
+  if (!changes) return changes
+  const times = new Set(changes.filter(c => c.at !== undefined).map(c => c.at))
+  const isPointing = isVideo && (times.size > 1 || (times.size === 1 && changes.length === 1))
+
+  return isPointing ? changes : changes.map(({ at: _, ...c }) => c)
+}
+
 // Every shown file is kept as it was then, so an old row keeps its picture
 // when the file is overwritten, and showing the same path again after edits
 // compares against the first version shown, not just the step before.
@@ -856,9 +867,11 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
           <Box key={`change-${n}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
             <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
             <Box flexDirection="column" width={TITLE}>
-              {lines.map((line, i) => (
-                <Button key={`change-${n}-${i}`} plain label={line} onPress={jump} />
-              ))}
+              {lines.map((line, i) =>
+                c.at !== undefined
+                  ? <Button key={`change-${n}-${i}`} plain label={line} onPress={jump} />
+                  : <Text key={`change-${n}-${i}`}>{line}</Text>,
+              )}
             </Box>
             {c.at !== undefined && (
               <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
@@ -1236,8 +1249,8 @@ const TOOL_INPUT = {
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
-    label: { type: 'string', description: 'Name of this side when comparing (default "Updated")' },
-    compare_label: { type: 'string', description: 'Name of the compared side (default "Original")' },
+    label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
+    compare_label: { type: 'string', description: 'Name of the compared side. Leave unset so it reads "Original"; set it only when the user asks for other names' },
     overlay: {
       type: 'string',
       enum: ['center', 'none'],
@@ -1346,7 +1359,7 @@ export const register: Register = on => {
         pr: input.pr,
         url: input.url,
         checks: input.checks,
-        changes: input.changes,
+        changes: timesThatMean(input.changes, VIDEO.test(input.path)),
         summary: input.summary,
         label: input.label,
         overlay: input.overlay,
