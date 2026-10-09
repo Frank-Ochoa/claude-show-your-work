@@ -209,6 +209,9 @@ async function prepareVideo($: EngineInterface, real: string, title: string, key
 const CHUNK = 24
 const decoding = new Map<string, Promise<void>>()
 const exists = ($: EngineInterface, file: string) => $.fs.stat(file).then(() => true, () => false)
+// Gone only when the disk says so; no answer at all (no fs here) is not gone.
+const isGone = ($: EngineInterface, file: string) =>
+  $.fs.stat(file).then(() => false, (e: unknown) => /ENOENT|not found|no such file/i.test(String((e as Error)?.message ?? e)))
 
 function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, i: number): Promise<void> {
   const c = Math.floor(Math.max(0, Math.min(i, f.count - 1)) / CHUNK)
@@ -1289,6 +1292,35 @@ function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: 
   )
 }
 
+// The file behind a preview is gone (temp cleared, cache trimmed, or the
+// original moved): say so in place of a blank box, with a prompt to paste.
+export function expiredPrompt(shown: Shown): string {
+  const file = shown.origin ?? shown.source ?? shown.path
+  const kind = shown.frames ? 'video' : 'image'
+  return `The ${kind} preview "${shown.title}" expired (${file} is gone). Please regenerate it and show it to me again with show_${kind}` +
+    (shown.compare ? ', with the same compare' : '') + (shown.changes?.length ? ' and the same list of changes' : '') + '.'
+}
+function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
+  const { Box, Text, Button } = ui
+  const prompt = expiredPrompt(shown)
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
+      <Text bold color="warning">⚠ This preview has expired</Text>
+      <Text wrap="wrap">{'\n'}"{shown.title}" was cleared from the preview cache, and its file is no longer there. Ask Claude to send it again.</Text>
+      <Box flexDirection="row" gap={2} marginTop={1}>
+        <Button
+          key="copy-expired"
+          variant="primary"
+          label="Copy prompt"
+          onPress={(press: { surface: 'terminal' }) =>
+            void $.ui.copy({ text: prompt, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Copied. Paste it to Claude.' : 'Could not copy'))
+          }
+        />
+      </Box>
+    </Box>
+  )
+}
+
 // The player: concept A (picture, scrub row, controls) everywhere; concept B
 // (A plus the QA report at its side) when there is a report and room for it.
 async function Viewer(
@@ -1339,6 +1371,11 @@ async function Viewer(
   }
   one.box = { columns: box.columns, rows: box.rows }
   await frameReady($, media, one.frame, site)
+  if (await isGone($, plainAt(media, one.frame))) {
+    one.timer?.cancel()
+    one.timer = undefined
+    return Expired(ui, $, shown, columns - 8)
+  }
   const pic = await picFor($, plainAt(media, one.frame), box)
   probe($, site, 'view', pic)
   if (one.isSplit && shown.pair && frames) return SplitView(ui, $, site, shown, columns, viewport?.rows ?? 40, isPane, prLink)

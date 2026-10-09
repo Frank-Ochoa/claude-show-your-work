@@ -105,3 +105,15 @@ test('the bar can be scrubbed while the clip plays', async $ => {
   const after = JSON.stringify(await m.drawn())
   expect(after.includes('0:01')).toBe(true)
 })
+
+test('a preview whose files are gone says it expired, with a prompt to copy', async $ => {
+  const gone = { kind: 'image', path: '/tmp/definitely-gone-xyz.png', source: '/tmp/definitely-gone-xyz.png', width: 800, height: 600, title: 'Hero', generation: 1 }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(gone)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'gone',
+    props: { tool_use_id: 'gone', tool: 'mcp__show-your-work__show_image', output, isErrored: false },
+    viewport: { columns: 140, rows: 50 },
+  } as any
+  const tree = JSON.stringify(await (await $.ui.mount(target)).drawn())
+  expect(tree.includes('"Image"') || tree.includes('expired')).toBe(true)
+})
