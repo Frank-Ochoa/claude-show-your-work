@@ -41,6 +41,8 @@ export type Shown = {
   compare?: Shown
   /** Earlier kept versions of the same file, oldest first; compare is the last. */
   history?: { path: string; note?: string }[]
+  /** The heading over the changes list, when they aren't changes. */
+  changesTitle?: string
   /** One line on this version, for the history list. */
   note?: string
   /** Which of history the compared side starts on. */

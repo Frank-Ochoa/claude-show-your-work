@@ -1161,7 +1161,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const changed = (
     <Box flexDirection="column" width={column}>
       {label(
-        `WHAT CHANGED · ${changes.length}`,
+        `${(shown.changesTitle || 'What changed').toUpperCase()} · ${changes.length}`,
         pages.length > 1 ? (
           <Button
             key="changes-more"
@@ -1642,6 +1642,7 @@ const TOOL_INPUT = {
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
+    changes_title: { type: 'string', description: 'A different heading for the changes list when they are not changes, e.g. "Video structure" for an ad broken into hook, problem, CTA. Leave unset for "What changed"' },
     previous: { type: 'string', description: 'When this is a revised version of something you showed before: that show\'s handle (the #id its result gave). The one before becomes Original and every earlier version in the chain is listed under History. Leave it out for something new' },
     versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier versions you still have but never showed, oldest first: each { path, note (what that version was, a few words) }. Only steps of this same work, never other directions or concepts. Versions shown before come from previous' },
     label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
@@ -1741,7 +1742,7 @@ export const register: Register = on => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
-      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; previous?: string
+      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; previous?: string; changes_title?: string
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
@@ -1765,6 +1766,7 @@ export const register: Register = on => {
         label: input.label,
         overlay: input.overlay,
         note,
+        ...(input.changes_title ? { changesTitle: String(input.changes_title).slice(0, 28) } : {}),
       }
       const lead = shown.frames?.lead ?? 0
       shown.checks = shiftTimes(shown.checks, lead)
