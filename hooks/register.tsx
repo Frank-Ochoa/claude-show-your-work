@@ -593,6 +593,13 @@ async function storeVersion($: EngineInterface, raw: string, note: string, title
     chain.unshift({ path: `${dir}/${v.id}${v.ext}`, note: v.note, id: v.id })
     at = v.parent
   }
+  // A recording keeps only itself and the one before it: Original and
+  // Updated, no deeper history, so re-recordings don't pile up.
+  if (VIDEO.test(real) && chain.length > 1) {
+    const older = chain.slice(0, -1)
+    void $.process.run(['rm', '-f', ...older.map(v => v.path)]).catch(() => undefined)
+    chain.splice(0, chain.length - 1)
+  }
   return { real, copy: `${dir}/${id}${ext}`, id, chain, missing }
 }
 
@@ -971,8 +978,8 @@ function pickVersion($: EngineInterface, site: string, shown: Shown, to: number)
 // With history, which version is on screen, in words: "viewing v1 of 3".
 function viewingLabel(shown: Shown, site: string): string {
   const history = shown.history
-  if (!history || history.length < 2) return ''
   const one = player(site)
+  if (!history || history.length < 2 || !one.isHistory) return ''
   const total = history.length + 1
   const at = one.isCompare ? (one.step ?? shown.historyAt ?? history.length - 1) + 1 : total
   return at === total ? `· latest, v${total}` : `· viewing v${at} of ${total}`
@@ -985,24 +992,35 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const { Box, Button } = ui
   if (!shown.compare) return null
   const one = player(site)
-  const isBoth = !!one.isSplit
-  const isCompare = !isBoth && !!one.isCompare
-  const isUpdated = !isBoth && !isCompare
-  const canBoth = !!(shown.frames && shown.pair) && (player(site).step === undefined || player(site).step === shown.historyAt)
+  // Original, Updated, Compare and History are separate views: one is lit.
+  const isHistory = !!one.isHistory
+  const isBoth = !isHistory && !!one.isSplit
+  const isCompare = !isHistory && !isBoth && !!one.isCompare
+  const isUpdated = !isHistory && !isBoth && !isCompare
+  const canBoth = !!(shown.frames && shown.pair)
   const hasSteps = (shown.history?.length ?? 0) > 1
-  const pick = (toCompare: boolean) => () => {
-    if (isBoth) split($, site, shown, false)
-    flip($, site, shown, toCompare)
+  // Original is always the version before; leaving History puts it back.
+  const restore = (toCompare: boolean) => {
+    const wasStepped = one.step !== undefined && one.step !== shown.historyAt
+    one.isHistory = false
+    one.step = undefined
+    if (one.isSplit) split($, site, shown, false)
+    if (wasStepped && one.isCompare) {
+      one.isCompare = false
+      if (toCompare) flip($, site, shown, true)
+      else draw($, site, shown)
+    } else flip($, site, shown, toCompare)
+    redraw($, site)
   }
 
   return (
     <Box flexDirection="row" gap={1}>
-      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? (hasSteps ? 'Earlier' : 'Original'))} onPress={pick(true)} />
-      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={tabLabel(shown.label ?? 'Updated')} onPress={pick(false)} />
-      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Compare" onPress={() => split($, site, shown, !isBoth)} />}
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? 'Original')} onPress={() => restore(true)} />
+      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={tabLabel(shown.label ?? 'Updated')} onPress={() => restore(false)} />
+      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Compare" onPress={() => { restore(false); split($, site, shown, true) }} />}
       {hasSteps && (
-        <Button key="history" variant={one.isHistory ? 'primary' : 'secondary'} label={`History · ${shown.history!.length + 1}`}
-          onPress={() => { one.isHistory = !one.isHistory; one.changesPage = 0; redraw($, site) }} />
+        <Button key="history" variant={isHistory ? 'primary' : 'secondary'} label={`History · ${shown.history!.length + 1}`}
+          onPress={() => { if (isHistory) return restore(false); one.isHistory = true; one.changesPage = 0; redraw($, site) }} />
       )}
     </Box>
   )
@@ -1759,9 +1777,9 @@ export const register: Register = on => {
           checks: input.compare_checks,
         }
         shown.compare.checks = shiftTimes(shown.compare.checks, shown.compare.frames?.lead ?? 0)
-        // Pictures and clips step back through every earlier version; a clip's
-        // frames are decoded only when its version is picked.
-        if (earlier.length > 1) {
+        // Pictures step back through every earlier version; a clip has only
+        // Original and Updated.
+        if (!shown.frames && earlier.length > 1) {
           shown.history = input.compare && !earlier.some(v => v.path === compare) ? [{ path: compare }, ...earlier] : earlier
           shown.historyAt = shown.history.findIndex(v => v.path === compare)
           remember(compare, shown.compare)
