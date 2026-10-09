@@ -105,6 +105,16 @@ async function pngSize($: EngineInterface, png: string) {
   return { width, height }
 }
 
+// Cut frames are a cache: past 1.5 GB the oldest clips go, and a window that
+// plays one again re-cuts it (ensureFrames). The newest two always stay.
+const FRAMES_CAP_KB = 1_500_000
+function trimFrames($: EngineInterface) {
+  return $.process.run(['sh', '-c',
+    'cd "$0" 2>/dev/null || exit 0; all=$(ls -dtr v* p* 2>/dev/null); n=$(printf "%s\\n" "$all" | grep -c .); ' +
+    'for d in $(printf "%s\\n" "$all" | head -n $((n > 2 ? n - 2 : 0))); do [ "$(du -sk . | cut -f1)" -le "$1" ] && break; rm -rf "$d"; done; true',
+    TMP, String(FRAMES_CAP_KB)]).catch(() => undefined)
+}
+
 // Cuts a clip into PNG frames the terminal can swap through.
 async function prepareVideo($: EngineInterface, real: string, title: string): Promise<Shown> {
   const probe = await $.process.run([ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', real])
@@ -126,6 +136,7 @@ async function prepareVideo($: EngineInterface, real: string, title: string): Pr
   const frames = { dir, count, fps, duration: count / fps }
   const poster = frameFile(frames, 0)
 
+  void trimFrames($)
   return { kind: 'video', path: poster, source: real, ...(await pngSize($, poster)), title, generation, frames }
 }
 
@@ -1405,7 +1416,7 @@ export const register: Register = on => {
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
     // Frames and converted pictures a week old go; a window that scrolls back
     // into view cuts its frames again from the source.
-    void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 ! -name kept -mtime +7 -exec rm -rf {} + 2>/dev/null; find ${TMP}/kept -type f -mtime +7 -delete 2>/dev/null; true`])
+    void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 ! -name kept -mtime +7 -exec rm -rf {} + 2>/dev/null; find ${TMP}/kept -type f -mtime +7 -delete 2>/dev/null; true`]).then(() => trimFrames($))
     await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',

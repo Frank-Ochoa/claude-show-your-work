@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/thumb.jpg" alt="Claude now shows its work, all inside your terminal app" width="100%">
+  <img src="docs/hero.gif" alt="Claude now shows its work, all inside your terminal app: a design session where concepts, feedback and v2 land in the chat" width="100%">
 </p>
 
 <h1 align="center">claude-show-your-work</h1>
@@ -8,10 +8,6 @@
   <b>Stop opening localhost to check what Claude did.</b><br>
   Claude shows you its finished work right in the chat: screenshots, videos of it clicking through your app,<br>
   and synced before/after QA. No tab-switching, no "let me go check".
-</p>
-
-<p align="center">
-  <img src="docs/hero.gif" alt="A design session in Claude Code: four concepts land in the chat, feedback, v2 with a before/after switch, then desktop and mobile together" width="100%">
 </p>
 
 <p align="center">
