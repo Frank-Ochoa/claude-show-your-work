@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -214,4 +214,12 @@ test('matching two long clips stays quick', () => {
   const took = Date.now() - started
   expect(path.length).toBeGreaterThan(239)
   expect(took).toBeLessThan(4000)
+})
+
+test('a white opening is found and the times move with it', () => {
+  expect(leadFrom('[blackdetect @ 0x1] black_start:0 black_end:0.64 black_duration:0.64', 12)).toBe(0.64)
+  expect(leadFrom('[blackdetect @ 0x1] black_start:2.1 black_end:3 black_duration:0.9', 12)).toBe(0)
+  expect(leadFrom('[blackdetect @ 0x1] black_start:0 black_end:12 black_duration:12', 12)).toBe(0)
+  expect(leadFrom('', 12)).toBe(0)
+  expect(shiftTimes([{ title: 'a', at: 2 }, { title: 'b' }, { title: 'c', at: 0.3 }], 0.64)).toEqual([{ title: 'a', at: 1.36 }, { title: 'b' }, { title: 'c', at: 0 }])
 })
