@@ -83,3 +83,25 @@ test('the history lists every version by what changed, newest first', async $ =>
   expect(tree.includes('VERSIONS · 3')).toBe(true)
   expect(tree.indexOf('Centred play')).toBeLessThan(tree.indexOf('Cloud photo'))
 })
+
+test('the bar can be scrubbed while the clip plays', async $ => {
+  const output = `Shown.\nshow-your-work:${JSON.stringify(shown)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'scrub',
+    props: { tool_use_id: 'scrub', tool: 'mcp__show-your-work__show_video', output, isErrored: false },
+    viewport: { columns: 140, rows: 50 },
+  } as any
+  const m = await $.ui.mount(target) as any
+  const before = JSON.stringify(await m.drawn())
+  if (before.includes('Pause')) { /* autoplayed */ } else await m.press({ key: 'play' })
+  await m.redraw()
+  const tree = JSON.stringify(await m.drawn())
+  expect(tree.includes('Pause')).toBe(true)
+  expect(tree.includes('"seek-0"')).toBe(true)
+  // Pressing near the end while playing moves the playhead there.
+  const last = [...tree.matchAll(/"seek-(\d+)"/g)].map(x => +x[1]).at(-1)
+  await m.press({ key: `seek-${last}` })
+  await m.redraw()
+  const after = JSON.stringify(await m.drawn())
+  expect(after.includes('0:01')).toBe(true)
+})
