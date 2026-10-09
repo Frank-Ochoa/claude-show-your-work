@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -228,4 +228,9 @@ test('a file version keys one frames folder', () => {
   expect(keyOf('/a.mp4|10|1')).toBe(keyOf('/a.mp4|10|1'))
   expect(keyOf('/a.mp4|10|1')).not.toBe(keyOf('/a.mp4|10|2'))
   expect(keyOf('/a.mp4|10|1')).toMatch(/^[0-9a-f]+$/)
+})
+
+test('long tab names are shortened so every tab fits', () => {
+  expect(tabLabel('Original')).toBe('Original')
+  expect(tabLabel('Before (blurred photo background)')).toBe('Before (blu…')
 })
