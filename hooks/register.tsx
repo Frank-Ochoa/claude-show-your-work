@@ -316,17 +316,17 @@ async function prepare($: EngineInterface, raw: string, title?: string): Promise
 }
 
 // Every shown file is kept as it was then, so an old row keeps its picture
-// when the file is overwritten, and showing the same path again after an edit
-// compares against the last version without being asked.
+// when the file is overwritten, and showing the same path again after edits
+// compares against the first version shown, not just the step before.
 async function keepVersion($: EngineInterface, raw: string): Promise<{ real: string; copy: string; previous?: string }> {
   const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
   const key = real.replace(/[^\w.-]/g, '_')
   generation += 1
   const copy = `${TMP}/kept/${key}~${generation}-${Math.floor(await $.clock.now())}${real.match(/\.[^./]+$/)?.[0] ?? ''}`
   const r = await $.process.run(['sh', '-c',
-    'mkdir -p "${3%/*}"; prev=$(ls -t "${3%/*}/$1~"* 2>/dev/null | head -1)\n' +
+    'mkdir -p "${3%/*}"; first=$(ls -tr "${3%/*}/$1~"* 2>/dev/null | head -1)\n' +
     'cp -c "$2" "$3" 2>/dev/null || cp "$2" "$3" || exit 1\n' +
-    '[ -n "$prev" ] && { cmp -s "$prev" "$3" && rm -f "$prev" || echo "$prev"; }; true',
+    '[ -n "$first" ] && ! cmp -s "$first" "$3" && echo "$first"; true',
     'keep', key, real, copy])
   if (r.exitCode !== 0) return { real, copy: real }
 
@@ -1274,7 +1274,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
         'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Showing the same path again after changing it compares against the version shown last on its own, so re-render to the same file; pass `compare` to pick a different before. ' +
+        'Showing the same path again after changing it compares against the first version shown of it on its own, so re-render to the same file and list every change since that first version; pass `compare` to pick a different before. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1288,7 +1288,7 @@ export const register: Register = on => {
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
         '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Showing the same path again after changing it compares against the version shown last on its own, so re-render to the same file; pass `compare` to pick a different before. ' +
+        'Showing the same path again after changing it compares against the first version shown of it on its own, so re-render to the same file and list every change since that first version; pass `compare` to pick a different before. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1352,7 +1352,7 @@ export const register: Register = on => {
         overlay: input.overlay,
       }
       if (compare) {
-        const label = input.compare_label ?? (input.compare ? undefined : 'Previous')
+        const label = input.compare_label ?? (input.compare ? undefined : 'Original')
         shown.compare = {
           ...(await prepare($, compare, label ?? 'Original')),
           label,
