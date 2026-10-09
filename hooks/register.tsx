@@ -804,7 +804,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
       <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
       {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
       {hasSteps && (
-        <Button key="history" plain dimColor={!one.isHistory} label={`History · ${shown.history!.length + 1}`}
+        <Button key="history" variant={one.isHistory ? 'primary' : 'secondary'} label={`History · ${shown.history!.length + 1}`}
           onPress={() => { one.isHistory = !one.isHistory; one.changesPage = 0; redraw($, site) }} />
       )}
     </Box>
@@ -952,7 +952,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
             key="changes-more"
             plain
             dimColor
-            label={`${page + 1}/${pages.length} ↓`}
+            label={`${page + 1}/${pages.length} ${page === pages.length - 1 ? '↑' : '↓'}`}
             onPress={() => {
               one.changesPage = (page + 1) % pages.length
               redraw($, site)
@@ -969,7 +969,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
             <Box flexDirection="column" width={TITLE}>
               {lines.map((line, i) =>
                 c.at !== undefined
-                  ? <Button key={`change-${n}-${i}`} plain label={line} onPress={jump} />
+                  ? <Button key={`change-${n}-${i}`} plain label={line} hover={{ inverse: true }} onPress={jump} />
                   : <Text key={`change-${n}-${i}`}>{line}</Text>,
               )}
             </Box>
@@ -996,7 +996,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
       {label(
         `VERSIONS · ${versions.length}`,
         versionPages.length > 1 ? (
-          <Button key="versions-more" plain dimColor label={`${versionPage + 1}/${versionPages.length} ↓`}
+          <Button key="versions-more" plain dimColor label={`${versionPage + 1}/${versionPages.length} ${versionPage === versionPages.length - 1 ? '↑' : '↓'}`}
             onPress={() => { one.changesPage = (versionPage + 1) % versionPages.length; redraw($, site) }} />
         ) : undefined,
       )}
@@ -1008,7 +1008,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
             <Text color={isOn ? 'suggestion' : undefined} dimColor={!isOn}>{`${i + 1}.`.padStart(3)}</Text>
             <Box flexDirection="column" width={TITLE}>
               {lines.map((line, j) => (
-                <Button key={`version-${i}-${j}`} plain label={line} onPress={() => pickVersion($, site, shown, i)} />
+                <Button key={`version-${i}-${j}`} plain label={line} hover={{ inverse: true }} onPress={() => pickVersion($, site, shown, i)} />
               ))}
             </Box>
             {(isOn || isLatest) && (
