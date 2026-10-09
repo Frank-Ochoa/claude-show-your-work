@@ -57,7 +57,7 @@ test('a picture with earlier versions draws with the version row', async $ => {
     const output = `Shown.\nshow-your-work:${JSON.stringify(withHistory)}`
     const target = {
       plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: `h-${columns}`,
-      props: { tool_use_id: `h-${columns}`, tool: 'mcp__image-view__show_image', output, isErrored: false },
+      props: { tool_use_id: `h-${columns}`, tool: 'mcp__show-your-work__show_image', output, isErrored: false },
       viewport: { columns, rows: 50 },
     } as any
     const mounted = await $.ui.mount(target)
@@ -73,7 +73,7 @@ test('the history lists every version by what changed, newest first', async $ =>
   const output = `Shown.\nshow-your-work:${JSON.stringify(withHistory)}`
   const target = {
     plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'hist',
-    props: { tool_use_id: 'hist', tool: 'mcp__image-view__show_image', output, isErrored: false },
+    props: { tool_use_id: 'hist', tool: 'mcp__show-your-work__show_image', output, isErrored: false },
     viewport: { columns: 160, rows: 50 },
   } as any
   const m = await $.ui.mount(target) as any

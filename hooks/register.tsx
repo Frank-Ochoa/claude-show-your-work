@@ -5,10 +5,9 @@ import type { Check, Frames, KeyChange, Overlay, Shown, Summary } from '../types
 
 const PANE = 'show-your-work'
 // The tools, and their names from before the rename, so old windows still draw.
-const TOOLS = ['show_image', 'show_video'].flatMap(t => [`mcp__show-your-work__${t}`, `mcp__image-view__${t}`])
+const TOOLS = ['show_image', 'show_video'].map(t => `mcp__show-your-work__${t}`)
 const TMP = '/tmp/claude-show-your-work'
 const MARK = 'show-your-work:'
-const OLD_MARK = 'image-view:'
 const VIDEO = /\.(mp4|mov|m4v|webm|mkv|avi|gif)$/i
 // Frames a clip is cut into at most, and the rate it plays at below that.
 const MAX_FRAMES = 900
@@ -181,17 +180,29 @@ export function mapTime(points: [number, number][], t: number, endA: number, end
   return t
 }
 
-// Each frame as a 64×36 grey thumbnail, for matching the two runs by eye.
-async function thumbs($: EngineInterface, f: Frames): Promise<number[][]> {
+// Every `stride`-th frame as a 32×18 grey thumbnail, for matching the two
+// runs by eye. Small and sparse on purpose: matching costs frames × frames.
+async function thumbs($: EngineInterface, f: Frames, stride: number): Promise<number[][]> {
   const r = await $.process.run([
     'sh', '-c',
-    `"$0" -v error -framerate ${f.fps} -i "$1/f%05d.png" -vf scale=64:36,format=gray -f rawvideo - | od -An -tu1 -v`,
+    `"$0" -v error -framerate ${f.fps} -i "$1/f%05d.png" -vf "select=not(mod(n\\,${stride})),scale=32:18,format=gray" -fps_mode passthrough -f rawvideo - | od -An -tu1 -v`,
     ffmpeg, f.dir,
   ])
   const px = r.stdout.trim().split(/\s+/).map(Number)
   const out: number[][] = []
-  for (let i = 0; i + 2304 <= px.length; i += 2304) out.push(px.slice(i, i + 2304))
+  for (let i = 0; i + 576 <= px.length; i += 576) out.push(px.slice(i, i + 576))
   return out
+}
+
+// How many frames apart to sample so neither run has more than 240.
+export const strideFor = (a: number, b: number) => Math.max(1, Math.ceil(Math.max(a, b) / 240))
+
+// A match made on sampled frames, spread back over every updated frame.
+export function spreadMatch(sampled: number[], stride: number, count: number, last: number): number[] {
+  return Array.from({ length: count }, (_, i) => {
+    const k = Math.min(sampled.length - 1, Math.floor(i / stride))
+    return Math.min(last, (sampled[k] ?? 0) * stride + (i % stride))
+  })
 }
 
 // What moved since the previous frame: the cursor, a fade, a scroll. The two
@@ -269,9 +280,10 @@ async function preparePair($: EngineInterface, original: Shown, updated: Shown) 
   generation += 1
   const dir = `${TMP}/p${generation}-${Math.floor(await $.clock.now())}`
   await $.process.run(['mkdir', '-p', `${dir}/o`])
-  const [ta, tb] = await Promise.all([thumbs($, f), thumbs($, g)])
+  const stride = strideFor(f.count, g.count)
+  const [ta, tb] = await Promise.all([thumbs($, f, stride), thumbs($, g, stride)])
   const match = ta.length && tb.length
-    ? matchOf(align(ta, tb), f.count)
+    ? spreadMatch(matchOf(align(ta, tb), ta.length), stride, f.count, g.count - 1)
     : Array.from({ length: f.count }, (_, i) => Math.min(g.count - 1, Math.round(mapTime(anchors(updated.checks, original.checks), i / f.fps, f.duration, g.duration) * g.fps)))
   const links = match.map((j, i) => `ln -sf "$0/${frameFile(g, j).split('/').pop()}" "$1/o/f${String(i + 1).padStart(5, '0')}.png"`).join('\n')
   await $.process.run(['sh', '-c', links, g.dir, dir])
@@ -386,7 +398,7 @@ export function parseShown(output: unknown): Shown | null {
       : Array.isArray(output)
         ? output.map(b => (b && typeof b === 'object' && 'text' in b ? String(b.text) : '')).join('\n')
         : ''
-  const line = text.split('\n').find(l => l.startsWith(MARK) || l.startsWith(OLD_MARK))
+  const line = text.split('\n').find(l => l.startsWith(MARK))
   if (!line) return null
   try {
     return JSON.parse(line.slice(line.indexOf(':') + 1)) as Shown
@@ -1462,7 +1474,7 @@ export const register: Register = on => {
     }
   })
 
-  on('tool.call', { tool: /^mcp__(show-your-work|image-view)__show_(image|video)$/ }, async ($, e) => {
+  on('tool.call', { tool: /^mcp__show-your-work__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/thumb.jpg" alt="Claude shows its work: inline images, video previews and QA review, right in Claude Code" width="100%">
+  <img src="docs/thumb.jpg" alt="Claude now shows its work, all inside your terminal app" width="100%">
 </p>
 
 <h1 align="center">claude-show-your-work</h1>

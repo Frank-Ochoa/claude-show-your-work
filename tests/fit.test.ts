@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -160,10 +160,6 @@ test('changes page by rows and an item never splits', () => {
   expect(pages).toEqual([['a'], ['b', 'c']])
 })
 
-test('windows from before the rename still parse', () => {
-  const old = parseShown(`Shown.\nimage-view:${JSON.stringify({ path: '/a.png', width: 1, height: 1, title: 'a', generation: 1 })}`)
-  expect(old?.title).toBe('a')
-})
 
 test('changes list in clip order, untimed ones last', () => {
   const out = inClipOrder([{ title: 'focus', at: 14 }, { title: 'note' }, { title: 'hover', at: 9 }, { title: 'cards', at: 7 }])
@@ -202,4 +198,20 @@ test('earlier versions arrive as paths, notes, or JSON text', () => {
   expect(versionsOf(undefined)).toEqual([])
   expect(noteOf([{ title: 'Centred play' }, { title: 'Cleaner card' }], undefined, 'Hero')).toBe('Centred play, Cleaner card')
   expect(noteOf(undefined, undefined, 'Hero')).toBe('Hero')
+})
+
+test('long clips are matched on sampled frames, then spread back', () => {
+  expect(strideFor(100, 120)).toBe(1)
+  expect(strideFor(482, 480)).toBe(3)
+  expect(spreadMatch([0, 1, 1], 2, 6, 10)).toEqual([0, 1, 2, 3, 2, 3])
+  expect(spreadMatch([0, 5], 3, 6, 12)).toEqual([0, 1, 2, 12, 12, 12])
+})
+
+test('matching two long clips stays quick', () => {
+  const clip = (seed: number) => Array.from({ length: 240 }, (_, i) => Array.from({ length: 576 }, (_, k) => (i * 7 + k * seed) % 256))
+  const started = Date.now()
+  const path = align(clip(3), clip(5))
+  const took = Date.now() - started
+  expect(path.length).toBeGreaterThan(239)
+  expect(took).toBeLessThan(4000)
 })
