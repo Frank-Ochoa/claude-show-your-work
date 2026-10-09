@@ -39,6 +39,8 @@ export type Shown = {
   summary?: Summary[]
   // the other side of a before/after, and the two sides' names
   compare?: Shown
+  /** Earlier versions of the same file, oldest first; compare is one of them. */
+  history?: Shown[]
   // Original and Updated merged into one clip, side by side, and its size
   pair?: Frames
   pairWidth?: number

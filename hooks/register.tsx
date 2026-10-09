@@ -35,6 +35,8 @@ type Player = {
   timer?: Timer
   isCompare?: boolean
   isSplit?: boolean
+  // which earlier version the compared side is, when there are several
+  step?: number
   hasAutoplayed?: boolean
   // how many bar cells the scrub row last drew, so playback redraws only on a change
   segments?: number
@@ -328,20 +330,21 @@ export function timesThatMean(changes: KeyChange[] | undefined, isVideo: boolean
 
 // Every shown file is kept as it was then, so an old row keeps its picture
 // when the file is overwritten, and showing the same path again after edits
-// compares against the first version shown, not just the step before.
-async function keepVersion($: EngineInterface, raw: string): Promise<{ real: string; copy: string; previous?: string }> {
+// compares against the version before, with every earlier one a step away.
+async function keepVersion($: EngineInterface, raw: string): Promise<{ real: string; copy: string; earlier: string[] }> {
   const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
   const key = real.replace(/[^\w.-]/g, '_')
   generation += 1
   const copy = `${TMP}/kept/${key}~${generation}-${Math.floor(await $.clock.now())}${real.match(/\.[^./]+$/)?.[0] ?? ''}`
   const r = await $.process.run(['sh', '-c',
-    'mkdir -p "${3%/*}"; first=$(ls -tr "${3%/*}/$1~"* 2>/dev/null | head -1)\n' +
+    'mkdir -p "${3%/*}"; last=$(ls -t "${3%/*}/$1~"* 2>/dev/null | head -1)\n' +
     'cp -c "$2" "$3" 2>/dev/null || cp "$2" "$3" || exit 1\n' +
-    '[ -n "$first" ] && ! cmp -s "$first" "$3" && echo "$first"; true',
+    '[ -n "$last" ] && cmp -s "$last" "$3" && rm -f "$last"\n' +
+    'ls -tr "${3%/*}/$1~"* | grep -vxF "$3"; true',
     'keep', key, real, copy])
-  if (r.exitCode !== 0) return { real, copy: real }
+  if (r.exitCode !== 0) return { real, copy: real, earlier: [] }
 
-  return { real, copy, previous: r.stdout.trim() || undefined }
+  return { real, copy, earlier: r.stdout.split('\n').filter(Boolean) }
 }
 
 // The tool's text result carries the shown item as `show-your-work:{json}`;
@@ -689,6 +692,41 @@ export function barChunks(segments: number, playhead: number, count = 20) {
 }
 
 // Original / Updated / Both side by side: the view shown is the accent button.
+// The compared side when it is one of several earlier versions: the one
+// before by default, with ‹ › to step further back. The count includes the
+// updated version, so "3/5" is the third of five.
+export function atStep(shown: Shown, site: string): Shown {
+  const history = shown.history
+  const step = player(site).step
+  if (!history?.length || step === undefined) return shown
+
+  return { ...shown, compare: history[Math.max(0, Math.min(history.length - 1, step))] }
+}
+
+function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
+  const { Box, Button, Text } = ui
+  const history = shown.history
+  if (!history || history.length < 2) return null
+  const one = player(site)
+  const at = one.step ?? history.length - 1
+  const go = (to: number) => () => {
+    if (to < 0 || to >= history.length) return
+    one.step = to
+    if (one.isSplit) split($, site, shown, false)
+    if (!one.isCompare) flip($, site, { ...shown, compare: history[to] }, true)
+    else draw($, site, history[to])
+    redraw($, site)
+  }
+
+  return (
+    <Box key="steps" flexDirection="row">
+      <Button key="step-back" plain dimColor={at === 0} label=" ‹ " onPress={go(at - 1)} />
+      <Text dimColor>{`${at + 1}/${history.length + 1}`}</Text>
+      <Button key="step-on" plain dimColor={at === history.length - 1} label=" › " onPress={go(at + 1)} />
+    </Box>
+  )
+}
+
 function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const { Box, Button } = ui
   if (!shown.compare) return null
@@ -707,6 +745,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
       <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
       <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
       {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
+      {Steps(ui, $, site, shown)}
     </Box>
   )
 }
@@ -1287,7 +1326,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
         'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Showing the same path again after changing it compares against the first version shown of it on its own, so re-render to the same file and list every change since that first version; pass `compare` to pick a different before. ' +
+        'Showing the same path again after changing it compares against the version shown before on its own (the user can step back through older ones), so re-render to the same file; pass `compare` to pick a different before. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1301,7 +1340,7 @@ export const register: Register = on => {
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
         '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Showing the same path again after changing it compares against the first version shown of it on its own, so re-render to the same file and list every change since that first version; pass `compare` to pick a different before. ' +
+        'Showing the same path again after changing it compares against the version shown before on its own (the user can step back through older ones), so re-render to the same file; pass `compare` to pick a different before. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1350,8 +1389,8 @@ export const register: Register = on => {
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
-      const kept = await keepVersion($, input.path).catch(() => ({ real: input.path!, copy: input.path!, previous: undefined }))
-      const compare = input.compare ?? kept.previous
+      const kept = await keepVersion($, input.path).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as string[] }))
+      const compare = input.compare ?? kept.earlier.at(-1)
       const shown: Shown = {
         ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop())),
         origin: kept.real,
@@ -1365,11 +1404,17 @@ export const register: Register = on => {
         overlay: input.overlay,
       }
       if (compare) {
-        const label = input.compare_label ?? (input.compare ? undefined : 'Original')
+        const label = input.compare_label
         shown.compare = {
           ...(await prepare($, compare, label ?? 'Original')),
           label,
           checks: input.compare_checks,
+        }
+        // A picture can step back through every earlier version; a clip
+        // compares with the one before only, as each needs its frames cut.
+        if (!input.compare && !shown.frames && kept.earlier.length > 1) {
+          const older = await Promise.all(kept.earlier.slice(-12, -1).map(p => prepare($, p, 'Original').catch(() => null)))
+          shown.history = [...older.filter((v): v is Shown => !!v), shown.compare]
         }
         if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})
       }
@@ -1405,7 +1450,7 @@ export const register: Register = on => {
     if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
     const shown = parseShown(props.output)
     if (!shown) return next(e)
-    const tree = await Viewer($, e, shown, e.requestId, false, e.viewport)
+    const tree = await Viewer($, e, atStep(shown, e.requestId), e.requestId, false, e.viewport)
     drawn.set(e.requestId, { key, tree })
 
     return tree
@@ -1416,6 +1461,6 @@ export const register: Register = on => {
     const shown = await read($, current)
     if (!shown) return <Text dimColor>Nothing to show yet. Run /img path/to/file</Text>
 
-    return Viewer($, e, shown, PANE, true, e.viewport)
+    return Viewer($, e, atStep(shown, PANE), PANE, true, e.viewport)
   })
 }
