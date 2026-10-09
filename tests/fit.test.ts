@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, slugOf, isGenericName } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -233,4 +233,14 @@ test('a file version keys one frames folder', () => {
 test('long tab names are shortened so every tab fits', () => {
   expect(tabLabel('Original')).toBe('Original')
   expect(tabLabel('Before (blurred photo background)')).toBe('Before (blu…')
+})
+
+test('design ids and generic names', () => {
+  expect(slugOf('Tern Landing Hero!')).toBe('tern-landing-hero')
+  expect(isGenericName('/x/hero.png')).toBe(true)
+  expect(isGenericName('/x/hero-v2.png')).toBe(true)
+  expect(isGenericName('/x/out.png')).toBe(true)
+  expect(isGenericName('/x/shot-3.png')).toBe(true)
+  expect(isGenericName('/x/tern-landing-hero.png')).toBe(false)
+  expect(isGenericName('/x/lumen-pricing-qa.webm')).toBe(false)
 })

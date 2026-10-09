@@ -513,6 +513,13 @@ export function noteOf(changes: KeyChange[] | undefined, change: string | undefi
   return (titles.length ? titles.join(', ') : change ?? title ?? '').slice(0, 200)
 }
 
+// A design id as a safe file-name part.
+export const slugOf = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'design'
+
+// File names that say nothing about what they show.
+export const isGenericName = (path: string) =>
+  /^(out|output|check|test|tmp|temp|image|img|screenshot|screen|shot|frame|render|preview|final|hero|page|video|clip|recording|untitled|a|b|v\d*)([-_ ]?(\d+|v\d+|final|new|old|fixed|check))*$/i.test(path.split('/').pop()!.replace(/\.[^.]+$/, ''))
+
 // Earlier versions as given: paths or { path, note }, as an array or the
 // same array sent as JSON text.
 export function versionsOf(value: unknown): { path: string; note?: string }[] {
@@ -530,9 +537,11 @@ export function versionsOf(value: unknown): { path: string; note?: string }[] {
 // Every shown file is kept as it was then, so an old row keeps its picture
 // when the file is overwritten, and showing the same path again after edits
 // compares against the version before, with every earlier one a step away.
-async function keepVersion($: EngineInterface, raw: string, note: string): Promise<{ real: string; copy: string; earlier: { path: string; note?: string }[] }> {
+async function keepVersion($: EngineInterface, raw: string, note: string, design?: string): Promise<{ real: string; copy: string; earlier: { path: string; note?: string }[] }> {
   const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
-  const key = real.replace(/[^\w.-]/g, '_')
+  // One design's versions share a key: the design id within this project, or
+  // else the file's own path.
+  const key = design ? `d-${keyOf(cwd)}-${slugOf(design)}` : real.replace(/[^\w.-]/g, '_')
   generation += 1
   const copy = `${TMP}/kept/${key}~${generation}-${Math.floor(await $.clock.now())}${real.match(/\.[^./]+$/)?.[0] ?? ''}`
   // Each copy keeps its one line beside it, in <copy>.txt.
@@ -936,7 +945,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const isBoth = !!one.isSplit
   const isCompare = !isBoth && !!one.isCompare
   const isUpdated = !isBoth && !isCompare
-  const canBoth = !!(shown.frames && shown.pair)
+  const canBoth = !!(shown.frames && shown.pair) && (player(site).step === undefined || player(site).step === shown.historyAt)
   const hasSteps = (shown.history?.length ?? 0) > 1
   const pick = (toCompare: boolean) => () => {
     if (isBoth) split($, site, shown, false)
@@ -1571,6 +1580,7 @@ const TOOL_INPUT = {
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
+    design: { type: 'string', description: 'A stable, descriptive id for what this shows, the same on every iteration of it (e.g. tern-landing-hero, lumen-pricing-qa). Versions with the same design in this project are listed together under History, whatever the file is called' },
     versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier versions of this same design you still have but never showed, oldest first: each { path, note (what that version was, a few words) }. Only steps of one design, never other directions or concepts. Versions shown before are listed on their own' },
     label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
     compare_label: { type: 'string', description: 'Name of the compared side. Leave unset so it reads "Original"; set it only when the user asks for other names' },
@@ -1610,7 +1620,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
         'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Showing the same path again after changing it compares against the version shown before on its own (the user can step back through older ones), so re-render to the same file; pass `compare` to pick a different before. ' +
+        'Name files after what they show (<project>-<thing>-<view>, e.g. tern-landing-hero.png; never out.png, check.png or hero.png) and pass `design`, a stable id for that design, the same on every iteration: its versions then group under History and the one before becomes Original. Pass `compare` to pick a different before. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1624,7 +1634,7 @@ export const register: Register = on => {
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
         '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Showing the same path again after changing it compares against the version shown before on its own (the user can step back through older ones), so re-render to the same file; pass `compare` to pick a different before. ' +
+        'Name files after what they show (<project>-<thing>-<view>, e.g. tern-landing-hero.png; never out.png, check.png or hero.png) and pass `design`, a stable id for that design, the same on every iteration: its versions then group under History and the one before becomes Original. Pass `compare` to pick a different before. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1669,18 +1679,18 @@ export const register: Register = on => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
-      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown
+      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; design?: string
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
       const note = noteOf(input.changes, input.change, input.title)
-      const kept = await keepVersion($, input.path, note).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as { path: string; note?: string }[] }))
+      const kept = await keepVersion($, input.path, note, input.design).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as { path: string; note?: string }[] }))
       // Every earlier version: the ones handed in, then the ones shown before.
       const given = versionsOf(input.versions).map(v => ({ ...v, path: expand(v.path, cwd, home) }))
       // A note handed in for a kept copy stays with it for later shows.
       const named = given.filter(v => v.note && v.path.startsWith(`${TMP}/kept/`) && kept.earlier.some(k => k.path === v.path && !k.note))
       if (named.length) void $.process.run(['sh', '-c', 'while [ $# -gt 1 ]; do printf "%s" "$2" > "$1.txt"; shift 2; done', 'name', ...named.flatMap(v => [v.path, v.note!])]).catch(() => undefined)
-      const earlier = VIDEO.test(input.path) ? kept.earlier : [...given, ...kept.earlier.filter(k => !given.some(g => g.path === k.path))]
+      const earlier = [...given, ...kept.earlier.filter(k => !given.some(g => g.path === k.path))]
       const compare = input.compare ?? earlier.at(-1)?.path
       const shown: Shown = {
         ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop(), await identityOf($, input.path))),
@@ -1706,9 +1716,9 @@ export const register: Register = on => {
           checks: input.compare_checks,
         }
         shown.compare.checks = shiftTimes(shown.compare.checks, shown.compare.frames?.lead ?? 0)
-        // A picture can step back through every earlier version; a clip
-        // compares with the one before only, as each needs its frames cut.
-        if (!shown.frames && earlier.length > 1) {
+        // Pictures and clips step back through every earlier version; a clip's
+        // frames are decoded only when its version is picked.
+        if (earlier.length > 1) {
           shown.history = input.compare && !earlier.some(v => v.path === compare) ? [{ path: compare }, ...earlier] : earlier
           shown.historyAt = shown.history.findIndex(v => v.path === compare)
           remember(compare, shown.compare)
@@ -1719,7 +1729,10 @@ export const register: Register = on => {
         remember(kept.copy, { kind: shown.kind, path: shown.path, source: shown.source, width: shown.width, height: shown.height, title: 'Original', generation: shown.generation })
       const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.width}×${shown.height}`
 
-      return { result: `Shown to the user: ${shown.title} (${what}).\n${MARK}${JSON.stringify(shown)}` }
+      const hint = isGenericName(input.path) || !input.design
+        ? `\nNext time: ${isGenericName(input.path) ? `name the file after what it shows (e.g. <project>-<thing>-<view>.png, not ${input.path.split('/').pop()}), ` : ''}${!input.design ? 'pass design (a stable id like tern-landing-hero) so its versions group under History, ' : ''}and keep both the same on every iteration.`
+        : ''
+      return { result: `Shown to the user: ${shown.title} (${what}).${hint}\n${MARK}${JSON.stringify(shown)}` }
     } catch (err) {
       return { deny: `show-your-work: ${(err as Error).message}` }
     }
