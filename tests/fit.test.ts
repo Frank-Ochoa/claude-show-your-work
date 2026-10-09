@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, slugOf, isGenericName } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -216,10 +216,13 @@ test('matching two long clips stays quick', () => {
   expect(took).toBeLessThan(4000)
 })
 
-test('a white opening is found and the times move with it', () => {
-  expect(leadFrom('[blackdetect @ 0x1] black_start:0 black_end:0.64 black_duration:0.64', 12)).toBe(0.64)
-  expect(leadFrom('[blackdetect @ 0x1] black_start:2.1 black_end:3 black_duration:0.9', 12)).toBe(0)
-  expect(leadFrom('[blackdetect @ 0x1] black_start:0 black_end:12 black_duration:12', 12)).toBe(0)
+test('a blank opening of any flat tone is found, and the times move with it', () => {
+  const frame = (t: number, lo: number, hi: number) => `frame:0 pts:0 pts_time:${t}\nlavfi.signalstats.YLOW=${lo}\nlavfi.signalstats.YHIGH=${hi}\n`
+  // off-white, then a light grey with a spinner, then the page
+  const log = frame(0, 240, 246) + frame(0.1, 228, 236) + frame(0.2, 228, 239) + frame(0.3, 40, 230)
+  expect(leadFrom(log, 12)).toBe(0.3)
+  expect(leadFrom(frame(0, 30, 200), 12)).toBe(0)
+  expect(leadFrom(frame(0, 250, 252) + frame(0.1, 251, 252), 12)).toBe(0)
   expect(leadFrom('', 12)).toBe(0)
   expect(shiftTimes([{ title: 'a', at: 2 }, { title: 'b' }, { title: 'c', at: 0.3 }], 0.64)).toEqual([{ title: 'a', at: 1.36 }, { title: 'b' }, { title: 'c', at: 0 }])
 })
@@ -235,12 +238,9 @@ test('long tab names are shortened so every tab fits', () => {
   expect(tabLabel('Before (blurred photo background)')).toBe('Before (blu…')
 })
 
-test('design ids and generic names', () => {
-  expect(slugOf('Tern Landing Hero!')).toBe('tern-landing-hero')
-  expect(isGenericName('/x/hero.png')).toBe(true)
-  expect(isGenericName('/x/hero-v2.png')).toBe(true)
-  expect(isGenericName('/x/out.png')).toBe(true)
-  expect(isGenericName('/x/shot-3.png')).toBe(true)
-  expect(isGenericName('/x/tern-landing-hero.png')).toBe(false)
-  expect(isGenericName('/x/lumen-pricing-qa.webm')).toBe(false)
+test('a handle is read from #id or id', () => {
+  expect(handleOf('#7F3A')).toBe('7f3a')
+  expect(handleOf(' 7f3a ')).toBe('7f3a')
+  expect(handleOf('')).toBeUndefined()
+  expect(handleOf(undefined)).toBeUndefined()
 })

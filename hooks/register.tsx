@@ -119,20 +119,36 @@ function trimFrames($: EngineInterface) {
     TMP, String(FRAMES_CAP_KB)]).catch(() => undefined)
 }
 
-// A recording often opens on a blank white page while the browser loads:
-// how long, in seconds, so the frames start where the page does.
+// A recording often opens on a blank page while the browser loads: white,
+// off-white, grey or dark, maybe with a small spinner or logo. Any frame that
+// is nearly one flat tone counts as blank; the clip starts at the first real one.
 async function whiteLead($: EngineInterface, real: string, duration: number): Promise<number> {
   const r = await $.process.run([ffmpeg, '-v', 'info', '-t', '8', '-i', real,
-    '-vf', 'negate,blackdetect=d=0:pic_th=0.97:pix_th=0.06', '-an', '-f', 'null', '-']).catch(() => null)
+    '-vf', 'fps=10,scale=160:-2,signalstats,metadata=print:key=lavfi.signalstats.YLOW:key=lavfi.signalstats.YHIGH',
+    '-an', '-f', 'null', '-']).catch(() => null)
   return r ? leadFrom(r.stderr, duration) : 0
 }
 
-// The white opening blackdetect found on the negated clip, if it starts the
-// clip and leaves something after it.
+// The blank opening in that log: the time of the first frame whose 10th to
+// 90th percentile brightness spreads wider than a flat page does, if that
+// leaves something after it.
 export function leadFrom(log: string, duration: number): number {
-  const m = log.match(/black_start:0(?:\.0+)?\s+black_end:(\d+(?:\.\d+)?)/)
-  const end = m ? Number(m[1]) : 0
-  return end > 0 && (!(duration > 0) || end < duration - 0.5) ? Math.round(end * 100) / 100 : 0
+  let t = 0, low = -1
+  for (const line of log.split('\n')) {
+    const pts = line.match(/pts_time:([\d.]+)/)
+    if (pts) { t = Number(pts[1]); low = -1; continue }
+    const lo = line.match(/YLOW=([\d.]+)/)
+    if (lo) { low = Number(lo[1]); continue }
+    const hi = line.match(/YHIGH=([\d.]+)/)
+    if (hi && low >= 0) {
+      if (Number(hi[1]) - low > 24) {
+        const lead = Math.round(t * 100) / 100
+        return lead > 0 && (!(duration > 0) || lead < duration - 0.5) ? lead : 0
+      }
+      low = -1
+    }
+  }
+  return 0
 }
 
 // Times given on the clip as it was, moved to the frames that start after
@@ -517,13 +533,6 @@ export function noteOf(changes: KeyChange[] | undefined, change: string | undefi
   return (titles.length ? titles.join(', ') : change ?? title ?? '').slice(0, 200)
 }
 
-// A design id as a safe file-name part.
-export const slugOf = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'design'
-
-// File names that say nothing about what they show.
-export const isGenericName = (path: string) =>
-  /^(out|output|check|test|tmp|temp|image|img|screenshot|screen|shot|frame|render|preview|final|hero|page|video|clip|recording|untitled|a|b|v\d*)([-_ ]?(\d+|v\d+|final|new|old|fixed|check))*$/i.test(path.split('/').pop()!.replace(/\.[^.]+$/, ''))
-
 // Earlier versions as given: paths or { path, note }, as an array or the
 // same array sent as JSON text.
 export function versionsOf(value: unknown): { path: string; note?: string }[] {
@@ -538,33 +547,53 @@ export function versionsOf(value: unknown): { path: string; note?: string }[] {
         : [])
 }
 
-// Every shown file is kept as it was then, so an old row keeps its picture
-// when the file is overwritten, and showing the same path again after edits
-// compares against the version before, with every earlier one a step away.
-async function keepVersion($: EngineInterface, raw: string, note: string, design?: string): Promise<{ real: string; copy: string; earlier: { path: string; note?: string }[] }> {
-  const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
-  // One design's versions share a key: the design id within this project, or
-  // else the file's own path.
-  const key = design ? `d-${keyOf(cwd)}-${slugOf(design)}` : real.replace(/[^\w.-]/g, '_')
-  generation += 1
-  const copy = `${TMP}/kept/${key}~${generation}-${Math.floor(await $.clock.now())}${real.match(/\.[^./]+$/)?.[0] ?? ''}`
-  // Each copy keeps its one line beside it, in <copy>.txt.
-  const r = await $.process.run(['sh', '-c',
-    'd="${3%/*}"; mkdir -p "$d"; last=$(ls -t "$d/$1~"* 2>/dev/null | grep -v "\\.txt$" | head -1)\n' +
-    'cp -c "$2" "$3" 2>/dev/null || cp "$2" "$3" || exit 1\n' +
-    'printf "%s" "$4" > "$3.txt"\n' +
-    '[ -n "$last" ] && cmp -s "$last" "$3" && rm -f "$last" "$last.txt"\n' +
-    'for f in $(ls -tr "$d/$1~"* | grep -v "\\.txt$" | grep -vxF "$3"); do printf "%s\\t%s\\n" "$f" "$(head -c 300 "$f.txt" 2>/dev/null | tr "\\n\\t" "  ")"; done; true',
-    'keep', key, real, copy, note])
-  if (r.exitCode !== 0) return { real, copy: real, earlier: [] }
-
-  return {
-    real, copy,
-    earlier: r.stdout.split('\n').filter(Boolean).map(line => {
-      const [path, text] = line.split('\t')
-      return { path, note: text?.trim() || undefined }
-    }),
+// Every shown file is kept as a version, in .show-your-work/ inside the
+// project (it ignores itself in git), so old rows keep their picture and the
+// history survives restarts. Each version gets a short handle; a revision
+// names its parent's handle as `previous`, so history is a chain of explicit
+// links, like commits. No file names are matched: forget the link and there's
+// no history, never a wrong one.
+type Version = { id: string; parent?: string; note?: string; ext: string; title?: string; origin?: string }
+export const handleOf = (value: unknown) => (typeof value === 'string' ? value.trim().replace(/^#/, '').toLowerCase() : '') || undefined
+let storeDir = ''
+async function storeOf($: EngineInterface): Promise<string> {
+  if (storeDir) return storeDir
+  for (const dir of [`${cwd || home}/.show-your-work`, `${TMP}/store`]) {
+    const r = await $.process.run(['sh', '-c', 'mkdir -p "$0" && { [ -f "$0/.gitignore" ] || printf "*\\n" > "$0/.gitignore"; }', dir]).catch(() => null)
+    if (r && r.exitCode === 0) return (storeDir = dir)
   }
+  return (storeDir = `${TMP}/store`)
+}
+async function readVersion($: EngineInterface, dir: string, id: string): Promise<Version | null> {
+  if (!/^[0-9a-f]{4,12}$/.test(id)) return null
+  const r = await $.process.run(['cat', `${dir}/${id}.json`]).catch(() => null)
+  if (!r || r.exitCode !== 0) return null
+  try { return JSON.parse(r.stdout) as Version } catch { return null }
+}
+async function storeVersion($: EngineInterface, raw: string, note: string, title: string | undefined, parent: string | undefined):
+  Promise<{ real: string; copy: string; id: string; chain: { path: string; note?: string; id: string }[]; missing?: string }> {
+  const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
+  const dir = await storeOf($)
+  const ext = real.match(/\.[^./]+$/)?.[0] ?? ''
+  generation += 1
+  const id = keyOf(`${real}|${await $.clock.now()}|${generation}`).slice(0, 6)
+  const meta: Version = { id, ...(parent ? { parent } : {}), note, ext, title, origin: real }
+  const r = await $.process.run(['sh', '-c',
+    'cp -c "$1" "$0/$2$3" 2>/dev/null || cp "$1" "$0/$2$3" || exit 1\n' +
+    'printf "%s" "$4" > "$0/$2.json"\n' +
+    'ls -t "$0"/*.json 2>/dev/null | tail -n +401 | while read f; do rm -f "${f%.json}".*; done; true',
+    dir, real, id, ext, JSON.stringify(meta)])
+  if (r.exitCode !== 0) return { real, copy: real, id, chain: [] }
+  // Follow the links back, oldest first.
+  const chain: { path: string; note?: string; id: string }[] = []
+  let at = parent, missing: string | undefined
+  for (let n = 0; at && n < 30; n++) {
+    const v = await readVersion($, dir, at)
+    if (!v) { if (n === 0) missing = at; break }
+    chain.unshift({ path: `${dir}/${v.id}${v.ext}`, note: v.note, id: v.id })
+    at = v.parent
+  }
+  return { real, copy: `${dir}/${id}${ext}`, id, chain, missing }
 }
 
 // The tool's text result carries the shown item as `show-your-work:{json}`;
@@ -1584,8 +1613,8 @@ const TOOL_INPUT = {
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
-    design: { type: 'string', description: 'A stable, descriptive id for what this shows, the same on every iteration of it (e.g. tern-landing-hero, lumen-pricing-qa). Versions with the same design in this project are listed together under History, whatever the file is called' },
-    versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier versions of this same design you still have but never showed, oldest first: each { path, note (what that version was, a few words) }. Only steps of one design, never other directions or concepts. Versions shown before are listed on their own' },
+    previous: { type: 'string', description: 'When this is a revised version of something you showed before: that show\'s handle (the #id its result gave). The one before becomes Original and every earlier version in the chain is listed under History. Leave it out for something new' },
+    versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier versions you still have but never showed, oldest first: each { path, note (what that version was, a few words) }. Only steps of this same work, never other directions or concepts. Versions shown before come from previous' },
     label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
     compare_label: { type: 'string', description: 'Name of the compared side. Leave unset so it reads "Original"; set it only when the user asks for other names' },
     overlay: {
@@ -1624,7 +1653,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
         'reviews with (what changed, QA, Original/Updated/Compare). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Name files after what they show (<project>-<thing>-<view>, e.g. tern-landing-hero.png; never out.png, check.png or hero.png) and pass `design`, a stable id for that design, the same on every iteration: its versions then group under History and the one before becomes Original. Pass `compare` to pick a different before. ' +
+        'Each show returns a handle (#id). When you show a revised version, pass `previous` with the handle of the version it replaces: that one becomes Original and the chain is listed under History. Pass `compare` to pick a different before. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1638,7 +1667,7 @@ export const register: Register = on => {
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
         '(what changed, QA, Original/Updated/Compare, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Name files after what they show (<project>-<thing>-<view>, e.g. tern-landing-hero.png; never out.png, check.png or hero.png) and pass `design`, a stable id for that design, the same on every iteration: its versions then group under History and the one before becomes Original. Pass `compare` to pick a different before. ' +
+        'Each show returns a handle (#id). When you show a revised version, pass `previous` with the handle of the version it replaces: that one becomes Original and the chain is listed under History. Pass `compare` to pick a different before. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1683,18 +1712,17 @@ export const register: Register = on => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
-      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; design?: string
+      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; previous?: string
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
       const note = noteOf(input.changes, input.change, input.title)
-      const kept = await keepVersion($, input.path, note, input.design).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as { path: string; note?: string }[] }))
+      const parent = handleOf(input.previous)
+      const kept = await storeVersion($, input.path, note, input.title, parent)
+        .catch(() => ({ real: input.path!, copy: input.path!, id: '', chain: [] as { path: string; note?: string; id: string }[], missing: undefined as string | undefined }))
       // Every earlier version: the ones handed in, then the ones shown before.
       const given = versionsOf(input.versions).map(v => ({ ...v, path: expand(v.path, cwd, home) }))
-      // A note handed in for a kept copy stays with it for later shows.
-      const named = given.filter(v => v.note && v.path.startsWith(`${TMP}/kept/`) && kept.earlier.some(k => k.path === v.path && !k.note))
-      if (named.length) void $.process.run(['sh', '-c', 'while [ $# -gt 1 ]; do printf "%s" "$2" > "$1.txt"; shift 2; done', 'name', ...named.flatMap(v => [v.path, v.note!])]).catch(() => undefined)
-      const earlier = [...given, ...kept.earlier.filter(k => !given.some(g => g.path === k.path))]
+      const earlier = [...given, ...kept.chain.filter(k => !given.some(g => g.path === k.path))]
       const compare = input.compare ?? earlier.at(-1)?.path
       const shown: Shown = {
         ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop(), await identityOf($, input.path))),
@@ -1733,9 +1761,10 @@ export const register: Register = on => {
         remember(kept.copy, { kind: shown.kind, path: shown.path, source: shown.source, width: shown.width, height: shown.height, title: 'Original', generation: shown.generation })
       const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.width}×${shown.height}`
 
-      const hint = isGenericName(input.path) || !input.design
-        ? `\nNext time: ${isGenericName(input.path) ? `name the file after what it shows (e.g. <project>-<thing>-<view>.png, not ${input.path.split('/').pop()}), ` : ''}${!input.design ? 'pass design (a stable id like tern-landing-hero) so its versions group under History, ' : ''}and keep both the same on every iteration.`
+      const handle = kept.id
+        ? ` Shown as #${kept.id}${kept.chain.length ? `, version ${kept.chain.length + 1} after #${kept.chain.at(-1)!.id}` : ''}. To show a revised version of this, pass previous: "${kept.id}".`
         : ''
+      const hint = (kept.missing ? ` #${kept.missing} wasn't found in this project, so this has no history.` : '') + handle
       return { result: `Shown to the user: ${shown.title} (${what}).${hint}\n${MARK}${JSON.stringify(shown)}` }
     } catch (err) {
       return { deny: `show-your-work: ${(err as Error).message}` }
