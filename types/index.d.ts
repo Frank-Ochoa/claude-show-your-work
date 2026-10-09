@@ -21,6 +21,8 @@ export type Shown = {
   path: string
   // the file the user gave, for Open and Reveal
   source?: string
+  /** The file as the user knows it (source is the kept copy). */
+  origin?: string
   width: number
   height: number
   title: string

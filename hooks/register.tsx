@@ -315,6 +315,24 @@ async function prepare($: EngineInterface, raw: string, title?: string): Promise
   return { kind: 'image', path: png, source: real, ...(await pngSize($, png)), title: name, generation }
 }
 
+// Every shown file is kept as it was then, so an old row keeps its picture
+// when the file is overwritten, and showing the same path again after an edit
+// compares against the last version without being asked.
+async function keepVersion($: EngineInterface, raw: string): Promise<{ real: string; copy: string; previous?: string }> {
+  const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
+  const key = real.replace(/[^\w.-]/g, '_')
+  generation += 1
+  const copy = `${TMP}/kept/${key}~${generation}-${Math.floor(await $.clock.now())}${real.match(/\.[^./]+$/)?.[0] ?? ''}`
+  const r = await $.process.run(['sh', '-c',
+    'mkdir -p "${3%/*}"; prev=$(ls -t "${3%/*}/$1~"* 2>/dev/null | head -1)\n' +
+    'cp -c "$2" "$3" 2>/dev/null || cp "$2" "$3" || exit 1\n' +
+    '[ -n "$prev" ] && { cmp -s "$prev" "$3" && rm -f "$prev" || echo "$prev"; }; true',
+    'keep', key, real, copy])
+  if (r.exitCode !== 0) return { real, copy: real }
+
+  return { real, copy, previous: r.stdout.trim() || undefined }
+}
+
 // The tool's text result carries the shown item as `show-your-work:{json}`;
 // the output may be that string or a list of text blocks.
 export function parseShown(output: unknown): Shown | null {
@@ -989,7 +1007,7 @@ async function Viewer(
   const one = player(site)
   const media = sideOf(shown, site)
   const frames = media.frames
-  const source = media.source ?? media.path
+  const source = media.origin ?? media.source ?? media.path
   const columns = viewport?.columns ?? 100
   const hasReport = !!(shown.change || shown.changes?.length || shown.summary?.length || shown.checks?.length)
   const isWide = hasReport && columns - 8 >= WIDE_ENOUGH
@@ -1242,7 +1260,7 @@ export const register: Register = on => {
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
     // Frames and converted pictures a week old go; a window that scrolls back
     // into view cuts its frames again from the source.
-    void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} + 2>/dev/null; true`])
+    void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 ! -name kept -mtime +7 -exec rm -rf {} + 2>/dev/null; find ${TMP}/kept -type f -mtime +7 -delete 2>/dev/null; true`])
     await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',
@@ -1256,6 +1274,7 @@ export const register: Register = on => {
         'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
         'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
         'reviews with (what changed, QA, Original/Updated/Both). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
+        'Showing the same path again after changing it compares against the version shown last on its own, so re-render to the same file; pass `compare` to pick a different before. ' +
         'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1269,6 +1288,7 @@ export const register: Register = on => {
         '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
         'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
         '(what changed, QA, Original/Updated/Both, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
+        'Showing the same path again after changing it compares against the version shown last on its own, so re-render to the same file; pass `compare` to pick a different before. ' +
         'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
@@ -1317,8 +1337,11 @@ export const register: Register = on => {
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
+      const kept = await keepVersion($, input.path).catch(() => ({ real: input.path!, copy: input.path!, previous: undefined }))
+      const compare = input.compare ?? kept.previous
       const shown: Shown = {
-        ...(await prepare($, input.path, input.title)),
+        ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop())),
+        origin: kept.real,
         change: input.change,
         pr: input.pr,
         url: input.url,
@@ -1328,10 +1351,11 @@ export const register: Register = on => {
         label: input.label,
         overlay: input.overlay,
       }
-      if (input.compare) {
+      if (compare) {
+        const label = input.compare_label ?? (input.compare ? undefined : 'Previous')
         shown.compare = {
-          ...(await prepare($, input.compare, input.compare_label ?? 'Original')),
-          label: input.compare_label,
+          ...(await prepare($, compare, label ?? 'Original')),
+          label,
           checks: input.compare_checks,
         }
         if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})
