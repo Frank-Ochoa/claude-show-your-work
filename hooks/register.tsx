@@ -716,8 +716,8 @@ function remember(path: string, made: Shown) {
   if (prepared.size > 200) prepared.delete(prepared.keys().next().value!)
 }
 
-function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown, isOn: boolean, onPick: () => void) {
-  const { Box, Button } = ui
+function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
+  const { Box, Button, Text } = ui
   const history = shown.history!
   const one = player(site)
   const at = one.step ?? history.length - 1
@@ -733,10 +733,10 @@ function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown, isOn: boo
   }
 
   return (
-    <Box key="steps" flexDirection="row">
-      <Button key="step-back" plain dimColor={at === 0} label="‹" onPress={go(at - 1)} />
-      <Button key="side-before" variant={isOn ? 'primary' : 'secondary'} label={`v${at + 1}`} onPress={onPick} />
-      <Button key="step-on" plain dimColor={at === history.length - 1} label="›" onPress={go(at + 1)} />
+    <Box key="steps" flexDirection="row" gap={1}>
+      <Button key="step-back" plain dimColor={at === 0} label="‹ older" onPress={go(at - 1)} />
+      <Text dimColor>{`${shown.compare?.label ?? 'Original'} is version ${at + 1} of ${history.length + 1}`}</Text>
+      <Button key="step-on" plain dimColor={at === history.length - 1} label="newer ›" onPress={go(at + 1)} />
     </Box>
   )
 }
@@ -756,12 +756,13 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   }
 
   return (
-    <Box flexDirection="row" gap={1}>
-      {hasSteps
-        ? Steps(ui, $, site, shown, isCompare, pick(true))
-        : <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />}
-      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={hasSteps ? `v${shown.history!.length + 1} ${shown.label ?? 'Updated'}` : shown.label ?? 'Updated'} onPress={pick(false)} />
-      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
+    <Box flexDirection="column">
+      <Box key="sides" flexDirection="row" gap={1}>
+        <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
+        <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
+        {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
+      </Box>
+      {hasSteps && Steps(ui, $, site, shown)}
     </Box>
   )
 }
@@ -810,9 +811,9 @@ const labelWidth = (column: number) => column - 4 /* card border + padding */ - 
 const TWO_COLUMNS = 72
 
 // Rows the sidebar spends on everything but the change rows.
-export function changesThatFit(height: number, summaryRows: number, hasPr: boolean, hasCompare: boolean) {
+export function changesThatFit(height: number, summaryRows: number, hasPr: boolean, hasCompare: boolean, hasSteps = false) {
   const qa = summaryRows >= 0 ? 1 /* gap */ + 1 /* label */ + 2 /* card border */ + 1 /* verdict */ + summaryRows : 0
-  const fixed = 2 /* padding */ + (hasCompare ? 3 : 0) /* top bar */ + 1 /* label */ + qa + (hasPr ? 2 : 0)
+  const fixed = 2 /* padding */ + (hasCompare ? (hasSteps ? 4 : 3) : 0) /* top bar, with the version line */ + 1 /* label */ + qa + (hasPr ? 2 : 0)
   return Math.max(1, height - fixed)
 }
 
@@ -883,7 +884,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
   const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
-  const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink, !!shown.compare) : Infinity
+  const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink, !!shown.compare, (shown.history?.length ?? 0) > 1) : Infinity
   const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
   const pages = pagesOf(wrapped.map((w, i) => ({ item: w, rows: w.lines.length + (i ? 1 : 0) })), room)
   const page = Math.min(one.changesPage ?? 0, pages.length - 1)
