@@ -412,6 +412,10 @@ export function turns(match: number[], fpsA: number, fpsB: number): [number, num
   return points.length > 40 ? points.filter((_, k) => k % Math.ceil(points.length / 40) === 0) : points
 }
 
+// The narrowest the scrub and button rows get, in columns: room for the play
+// button, both times, a usable bar and the action buttons on one line.
+const CONTROLS_MIN = 64
+
 // Pixels between Original and Updated in the merged clip.
 const PAIR_GAP = 40
 
@@ -1466,11 +1470,14 @@ async function Viewer(
     />
   )
 
+  // A tall, narrow picture still gets control rows wide enough to read on one
+  // line each; the picture sits centred above them.
+  const rowWidth = Math.max(box.columns, CONTROLS_MIN)
   const stage = (
-    <Box flexDirection="column" width={box.columns}>
+    <Box flexDirection="column" width={rowWidth} alignItems="center">
       {Picture(ui, $, site, shown, media, box, pic)}
-      {frames && Scrub(ui, $, site, media, box.columns, shown)}
-      <Box flexDirection="row" justifyContent="space-between" columnGap={2} flexWrap="wrap" width={box.columns}>
+      {frames && Scrub(ui, $, site, media, rowWidth, shown)}
+      <Box flexDirection="row" justifyContent="space-between" columnGap={2} flexWrap="wrap" width={rowWidth}>
         <Box flexDirection="row" columnGap={2}>
           {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
           {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
@@ -1485,7 +1492,7 @@ async function Viewer(
   )
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? box.columns + SIDE + 3 : Math.max(box.columns, below)) + 4}>
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? Math.max(box.columns, CONTROLS_MIN) + SIDE + 3 : Math.max(box.columns, CONTROLS_MIN, below)) + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" gap={2} flexShrink={1}>
           <Text bold wrap="truncate-end">{shown.title}</Text>
