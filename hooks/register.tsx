@@ -693,36 +693,50 @@ export function barChunks(segments: number, playhead: number, count = 20) {
 
 // Original / Updated / Both side by side: the view shown is the accent button.
 // The compared side when it is one of several earlier versions: the one
-// before by default, with ‹ › to step further back. The count includes the
-// updated version, so "3/5" is the third of five.
+// before by default, with ‹ › to step further back. Versions are numbered
+// from the first one shown, so the updated side is the highest.
 export function atStep(shown: Shown, site: string): Shown {
-  const history = shown.history
   const step = player(site).step
-  if (!history?.length || step === undefined) return shown
-
-  return { ...shown, compare: history[Math.max(0, Math.min(history.length - 1, step))] }
+  const picked = step === undefined ? undefined : prepared.get(shown.history?.[step] ?? '')
+  return picked ? { ...shown, compare: picked } : shown
 }
 
-function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
-  const { Box, Button, Text } = ui
-  const history = shown.history
-  if (!history || history.length < 2) return null
+// Kept copies never change, so each is read once, when first stepped to.
+const prepared = new Map<string, Shown>()
+async function preparedOf($: EngineInterface, path: string): Promise<Shown> {
+  const known = prepared.get(path)
+  if (known) return known
+  const made = await prepare($, path, 'Original')
+  remember(path, made)
+  return made
+}
+// Entries are a path and a size, not pixels; the oldest go past 200.
+function remember(path: string, made: Shown) {
+  prepared.set(path, made)
+  if (prepared.size > 200) prepared.delete(prepared.keys().next().value!)
+}
+
+function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown, isOn: boolean, onPick: () => void) {
+  const { Box, Button } = ui
+  const history = shown.history!
   const one = player(site)
   const at = one.step ?? history.length - 1
   const go = (to: number) => () => {
     if (to < 0 || to >= history.length) return
-    one.step = to
-    if (one.isSplit) split($, site, shown, false)
-    if (!one.isCompare) flip($, site, { ...shown, compare: history[to] }, true)
-    else draw($, site, history[to])
-    redraw($, site)
+    void preparedOf($, history[to]).then(version => {
+      one.step = to
+      if (one.isSplit) split($, site, shown, false)
+      if (!one.isCompare) flip($, site, { ...shown, compare: version }, true)
+      else draw($, site, version)
+      redraw($, site)
+    }).catch(() => $.ui.toast('That version is gone'))
   }
 
   return (
     <Box key="steps" flexDirection="row">
-      <Button key="step-back" plain dimColor={at === 0} label=" ‹ " onPress={go(at - 1)} />
-      <Text dimColor>{`${at + 1}/${history.length + 1}`}</Text>
-      <Button key="step-on" plain dimColor={at === history.length - 1} label=" › " onPress={go(at + 1)} />
+      <Button key="step-back" plain dimColor={at === 0} label="‹" onPress={go(at - 1)} />
+      <Button key="side-before" variant={isOn ? 'primary' : 'secondary'} label={`v${at + 1}`} onPress={onPick} />
+      <Button key="step-on" plain dimColor={at === history.length - 1} label="›" onPress={go(at + 1)} />
     </Box>
   )
 }
@@ -735,6 +749,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const isCompare = !isBoth && !!one.isCompare
   const isUpdated = !isBoth && !isCompare
   const canBoth = !!(shown.frames && shown.pair)
+  const hasSteps = (shown.history?.length ?? 0) > 1
   const pick = (toCompare: boolean) => () => {
     if (isBoth) split($, site, shown, false)
     flip($, site, shown, toCompare)
@@ -742,10 +757,11 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
 
   return (
     <Box flexDirection="row" gap={1}>
-      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
-      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
+      {hasSteps
+        ? Steps(ui, $, site, shown, isCompare, pick(true))
+        : <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />}
+      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={hasSteps ? `v${shown.history!.length + 1} ${shown.label ?? 'Updated'}` : shown.label ?? 'Updated'} onPress={pick(false)} />
       {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
-      {Steps(ui, $, site, shown)}
     </Box>
   )
 }
@@ -1406,18 +1422,19 @@ export const register: Register = on => {
       if (compare) {
         const label = input.compare_label
         shown.compare = {
-          ...(await prepare($, compare, label ?? 'Original')),
+          ...(input.compare ? await prepare($, compare, label ?? 'Original') : await preparedOf($, compare)),
           label,
           checks: input.compare_checks,
         }
         // A picture can step back through every earlier version; a clip
         // compares with the one before only, as each needs its frames cut.
         if (!input.compare && !shown.frames && kept.earlier.length > 1) {
-          const older = await Promise.all(kept.earlier.slice(-12, -1).map(p => prepare($, p, 'Original').catch(() => null)))
-          shown.history = [...older.filter((v): v is Shown => !!v), shown.compare]
+          shown.history = kept.earlier
         }
         if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})
       }
+      if (!shown.frames && kept.copy !== kept.real)
+        remember(kept.copy, { kind: shown.kind, path: shown.path, source: shown.source, width: shown.width, height: shown.height, title: 'Original', generation: shown.generation })
       const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.width}×${shown.height}`
 
       return { result: `Shown to the user: ${shown.title} (${what}).\n${MARK}${JSON.stringify(shown)}` }
