@@ -40,7 +40,9 @@ export type Shown = {
   // the other side of a before/after, and the two sides' names
   compare?: Shown
   /** Earlier kept versions of the same file, oldest first; compare is the last. */
-  history?: string[]
+  history?: { path: string; note?: string }[]
+  /** One line on this version, for the history list. */
+  note?: string
   /** Which of history the compared side starts on. */
   historyAt?: number
   // Original and Updated merged into one clip, side by side, and its size

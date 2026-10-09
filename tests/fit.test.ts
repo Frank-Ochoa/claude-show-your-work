@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, listOf } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -195,9 +195,11 @@ test('times only stay when they point somewhere', () => {
   expect(timesThatMean(undefined, true)).toBeUndefined()
 })
 
-test('a list of paths arrives as an array or as JSON text', () => {
-  expect(listOf(['/a', '/b'])).toEqual(['/a', '/b'])
-  expect(listOf('["/a","/b"]')).toEqual(['/a', '/b'])
-  expect(listOf('/a')).toEqual(['/a'])
-  expect(listOf(undefined)).toEqual([])
+test('earlier versions arrive as paths, notes, or JSON text', () => {
+  expect(versionsOf(['/a', { path: '/b', note: 'cloud photo' }])).toEqual([{ path: '/a' }, { path: '/b', note: 'cloud photo' }])
+  expect(versionsOf('["/a"]')).toEqual([{ path: '/a' }])
+  expect(versionsOf('/a')).toEqual([{ path: '/a' }])
+  expect(versionsOf(undefined)).toEqual([])
+  expect(noteOf([{ title: 'Centred play' }, { title: 'Cleaner card' }], undefined, 'Hero')).toBe('Centred play, Cleaner card')
+  expect(noteOf(undefined, undefined, 'Hero')).toBe('Hero')
 })

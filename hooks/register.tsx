@@ -37,6 +37,8 @@ type Player = {
   isSplit?: boolean
   // which earlier version the compared side is, when there are several
   step?: number
+  // the sidebar lists the versions instead of what changed
+  isHistory?: boolean
   hasAutoplayed?: boolean
   // how many bar cells the scrub row last drew, so playback redraws only on a change
   segments?: number
@@ -63,7 +65,7 @@ function redraw($: EngineInterface, site?: string) {
   else version += 1
   $.ui.invalidate('ui.render')
 }
-const player = (site: string): Player => {
+export const player = (site: string): Player => {
   let one = players.get(site)
   if (!one) players.set(site, (one = { frame: 0 }))
 
@@ -328,31 +330,51 @@ export function timesThatMean(changes: KeyChange[] | undefined, isVideo: boolean
   return isPointing ? changes : changes.map(({ at: _, ...c }) => c)
 }
 
-// A list as given: an array, or the same array sent as JSON text.
-export function listOf(value: unknown): string[] {
+// The line a version is listed by: what changed in it.
+export function noteOf(changes: KeyChange[] | undefined, change: string | undefined, title: string | undefined): string {
+  const titles = (changes ?? []).map(c => c.title)
+  return (titles.length ? titles.join(', ') : change ?? title ?? '').slice(0, 200)
+}
+
+// Earlier versions as given: paths or { path, note }, as an array or the
+// same array sent as JSON text.
+export function versionsOf(value: unknown): { path: string; note?: string }[] {
   if (typeof value === 'string') {
-    try { value = JSON.parse(value) } catch { return value ? [value] : [] }
+    try { value = JSON.parse(value) } catch { return value ? [{ path: value }] : [] }
   }
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+  if (!Array.isArray(value)) return []
+  return value.flatMap(v =>
+    typeof v === 'string' ? [{ path: v }]
+      : v && typeof v === 'object' && typeof (v as { path?: unknown }).path === 'string'
+        ? [{ path: (v as { path: string }).path, note: typeof (v as { note?: unknown }).note === 'string' ? (v as { note: string }).note : undefined }]
+        : [])
 }
 
 // Every shown file is kept as it was then, so an old row keeps its picture
 // when the file is overwritten, and showing the same path again after edits
 // compares against the version before, with every earlier one a step away.
-async function keepVersion($: EngineInterface, raw: string): Promise<{ real: string; copy: string; earlier: string[] }> {
+async function keepVersion($: EngineInterface, raw: string, note: string): Promise<{ real: string; copy: string; earlier: { path: string; note?: string }[] }> {
   const real = (await $.fs.stat(expand(raw, cwd, home), { resolve: true })).realPath ?? expand(raw, cwd, home)
   const key = real.replace(/[^\w.-]/g, '_')
   generation += 1
   const copy = `${TMP}/kept/${key}~${generation}-${Math.floor(await $.clock.now())}${real.match(/\.[^./]+$/)?.[0] ?? ''}`
+  // Each copy keeps its one line beside it, in <copy>.txt.
   const r = await $.process.run(['sh', '-c',
-    'mkdir -p "${3%/*}"; last=$(ls -t "${3%/*}/$1~"* 2>/dev/null | head -1)\n' +
+    'd="${3%/*}"; mkdir -p "$d"; last=$(ls -t "$d/$1~"* 2>/dev/null | grep -v "\\.txt$" | head -1)\n' +
     'cp -c "$2" "$3" 2>/dev/null || cp "$2" "$3" || exit 1\n' +
-    '[ -n "$last" ] && cmp -s "$last" "$3" && rm -f "$last"\n' +
-    'ls -tr "${3%/*}/$1~"* | grep -vxF "$3"; true',
-    'keep', key, real, copy])
+    'printf "%s" "$4" > "$3.txt"\n' +
+    '[ -n "$last" ] && cmp -s "$last" "$3" && rm -f "$last" "$last.txt"\n' +
+    'for f in $(ls -tr "$d/$1~"* | grep -v "\\.txt$" | grep -vxF "$3"); do printf "%s\\t%s\\n" "$f" "$(head -c 300 "$f.txt" 2>/dev/null | tr "\\n\\t" "  ")"; done; true',
+    'keep', key, real, copy, note])
   if (r.exitCode !== 0) return { real, copy: real, earlier: [] }
 
-  return { real, copy, earlier: r.stdout.split('\n').filter(Boolean) }
+  return {
+    real, copy,
+    earlier: r.stdout.split('\n').filter(Boolean).map(line => {
+      const [path, text] = line.split('\t')
+      return { path, note: text?.trim() || undefined }
+    }),
+  }
 }
 
 // The tool's text result carries the shown item as `show-your-work:{json}`;
@@ -705,7 +727,7 @@ export function barChunks(segments: number, playhead: number, count = 20) {
 // from the first one shown, so the updated side is the highest.
 export function atStep(shown: Shown, site: string): Shown {
   const step = player(site).step
-  const picked = step === undefined ? undefined : prepared.get(shown.history?.[step] ?? '')
+  const picked = step === undefined ? undefined : prepared.get(shown.history?.[step]?.path ?? '')
   return picked ? { ...shown, compare: picked } : shown
 }
 
@@ -724,43 +746,22 @@ function remember(path: string, made: Shown) {
   if (prepared.size > 200) prepared.delete(prepared.keys().next().value!)
 }
 
-// Several earlier versions: one row of numbers, the one on screen lit.
-// The last is the new version; any other shows on the compared side.
-function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: number) {
-  const { Box, Button, Text } = ui
+// Puts an earlier version on the original side, read the first time it is
+// picked; the newest entry is the updated side itself.
+function pickVersion($: EngineInterface, site: string, shown: Shown, to: number) {
   const history = shown.history!
   const one = player(site)
-  const latest = history.length
-  const on = one.isCompare ? one.step ?? shown.historyAt ?? latest - 1 : latest
-  const go = (to: number) => () => {
-    if (one.isSplit) split($, site, shown, false)
-    if (to === latest) return flip($, site, shown, false)
-    void preparedOf($, history[to]).then(version => {
-      one.step = to
-      if (!one.isCompare) flip($, site, { ...shown, compare: version }, true)
-      else draw($, site, version)
-      redraw($, site)
-    }).catch(() => $.ui.toast('That version is gone'))
-  }
-  // Each number is a full button, five columns to aim at; as many as fit,
-  // keeping the one on screen in view.
-  const fits = Math.max(3, Math.floor((width - 10) / 6))
-  const first = Math.max(0, Math.min(latest + 1 - fits, on - Math.floor(fits / 2)))
-  const last = Math.min(latest, first + fits - 1)
-
-  return (
-    <Box key="steps" flexDirection="row" gap={1}>
-      <Text dimColor>Version</Text>
-      {first > 0 && <Text dimColor>…</Text>}
-      {Array.from({ length: last - first + 1 }, (_, k) => first + k).map(i => (
-        <Button key={`v-${i}`} variant={i === on ? 'primary' : 'secondary'} label={`${i + 1}`} onPress={go(i)} />
-      ))}
-      {last < latest && <Text dimColor>…</Text>}
-    </Box>
-  )
+  if (one.isSplit) split($, site, shown, false)
+  if (to >= history.length) return flip($, site, shown, false)
+  void preparedOf($, history[to].path).then(version => {
+    one.step = to
+    if (!one.isCompare) flip($, site, { ...shown, compare: version }, true)
+    else draw($, site, version)
+    redraw($, site)
+  }).catch(() => $.ui.toast('That version is gone'))
 }
 
-function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown, width = 40) {
+function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   const { Box, Button } = ui
   if (!shown.compare) return null
   const one = player(site)
@@ -775,13 +776,15 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown, width = 40
   }
 
   return (
-    hasSteps ? Steps(ui, $, site, shown, width) : (
-      <Box flexDirection="row" gap={1}>
-        <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
-        <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
-        {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
-      </Box>
-    )
+    <Box flexDirection="row" gap={1}>
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
+      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
+      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Both" onPress={() => split($, site, shown, !isBoth)} />}
+      {hasSteps && (
+        <Button key="history" plain dimColor={!one.isHistory} label={`History · ${shown.history!.length + 1}`}
+          onPress={() => { one.isHistory = !one.isHistory; one.changesPage = 0; redraw($, site) }} />
+      )}
+    </Box>
   )
 }
 
@@ -957,6 +960,44 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
       })}
     </Box>
   )
+  // The versions, newest first, each by what changed in it; the one on the
+  // original side is lit, and a click puts another there.
+  const history = one.isHistory ? shown.history : undefined
+  const onSide = one.isCompare ? one.step ?? shown.historyAt ?? (history?.length ?? 1) - 1 : (history?.length ?? 0)
+  const versions = history ? [...history, { path: '', note: shown.note }].map((v, i) => ({ v, i })).reverse() : []
+  const listed = versions.map(({ v, i }) => ({ i, lines: wrapWords(v.note || (i === history!.length ? 'This version' : `Shown earlier`), TITLE) }))
+  const versionPages = pagesOf(listed.map((w, k) => ({ item: w, rows: w.lines.length + (k ? 1 : 0) })), room)
+  const versionPage = Math.min(one.changesPage ?? 0, versionPages.length - 1)
+  const versionList = history && (
+    <Box flexDirection="column" width={column}>
+      {label(
+        `VERSIONS · ${versions.length}`,
+        versionPages.length > 1 ? (
+          <Button key="versions-more" plain dimColor label={`${versionPage + 1}/${versionPages.length} ↓`}
+            onPress={() => { one.changesPage = (versionPage + 1) % versionPages.length; redraw($, site) }} />
+        ) : undefined,
+      )}
+      {(versionPages[versionPage] ?? []).map(({ i, lines }, k) => {
+        const isOn = i === onSide
+        const isLatest = i === history.length
+        return (
+          <Box key={`version-${i}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
+            <Text color={isOn ? 'suggestion' : undefined} dimColor={!isOn}>{`${i + 1}.`.padStart(3)}</Text>
+            <Box flexDirection="column" width={TITLE}>
+              {lines.map((line, j) => (
+                <Button key={`version-${i}-${j}`} plain label={line} onPress={() => pickVersion($, site, shown, i)} />
+              ))}
+            </Box>
+            {(isOn || isLatest) && (
+              <Text backgroundColor={isOn ? 'suggestion' : PILL} color={isOn ? 'inverseText' : undefined}>
+                {isLatest ? ' now ' : ' on '}
+              </Text>
+            )}
+          </Box>
+        )
+      })}
+    </Box>
+  )
   const qa = total > 0 && (
     <Box flexDirection="column" width={column} marginTop={isTwo ? 0 : 1}>
       {label('QA', <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>)}
@@ -981,12 +1022,16 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
     <Box flexDirection="column" width={width} height={height} overflow="hidden" backgroundColor={SIDEBAR}>
       {shown.compare && (
         <Box width={width} backgroundColor={TOPBAR} paddingX={2} paddingY={1}>
-          {Tabs(ui, $, site, shown, width - 4)}
+          {Tabs(ui, $, site, shown)}
         </Box>
       )}
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        {changes.length > 0 && (isTwo ? <Box flexDirection="row" gap={3}>{changed}{qa}</Box> : changed)}
-        {(!isTwo || !changes.length) && qa}
+        {versionList || (
+          <Box flexDirection="column">
+            {changes.length > 0 && (isTwo ? <Box flexDirection="row" gap={3}>{changed}{qa}</Box> : changed)}
+            {(!isTwo || !changes.length) && qa}
+          </Box>
+        )}
         {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
       </Box>
     </Box>
@@ -1096,7 +1141,7 @@ async function Viewer(
   const frames = media.frames
   const source = media.origin ?? media.source ?? media.path
   const columns = viewport?.columns ?? 100
-  const hasReport = !!(shown.change || shown.changes?.length || shown.summary?.length || shown.checks?.length)
+  const hasReport = !!(shown.change || shown.changes?.length || shown.summary?.length || shown.checks?.length || (one.isHistory && shown.history))
   const isWide = hasReport && columns - 8 >= WIDE_ENOUGH
   const room = columns - (isPane ? 6 : 10) - (isWide ? SIDE + 3 : 0)
   const box = sizeFor(media.width, media.height, room, viewport?.rows ?? 40, isPane)
@@ -1157,7 +1202,7 @@ async function Viewer(
         <Box flexDirection="row" columnGap={2}>
           {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
           {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
-          {!isWide && !hasReport && Tabs(ui, $, site, shown, box.columns - 16)}
+          {!isWide && !hasReport && Tabs(ui, $, site, shown)}
         </Box>
         <Box flexDirection="row" columnGap={2}>
           {opener}
@@ -1323,7 +1368,7 @@ const TOOL_INPUT = {
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
-    versions: { type: 'array', items: { type: 'string' }, description: 'Earlier versions of this picture you still have, oldest first (absolute paths): the user can click through them all. Versions shown before are added on their own' },
+    versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier versions of this same design you still have but never showed, oldest first: each { path, note (what that version was, a few words) }. Only steps of one design, never other directions or concepts. Versions shown before are listed on their own' },
     label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
     compare_label: { type: 'string', description: 'Name of the compared side. Leave unset so it reads "Original"; set it only when the user asks for other names' },
     overlay: {
@@ -1425,10 +1470,15 @@ export const register: Register = on => {
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
-      const kept = await keepVersion($, input.path).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as string[] }))
+      const note = noteOf(input.changes, input.change, input.title)
+      const kept = await keepVersion($, input.path, note).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as { path: string; note?: string }[] }))
       // Every earlier version: the ones handed in, then the ones shown before.
-      const earlier = VIDEO.test(input.path) ? kept.earlier : [...new Set([...listOf(input.versions).map(v => expand(v, cwd, home)), ...kept.earlier])]
-      const compare = input.compare ?? earlier.at(-1)
+      const given = versionsOf(input.versions).map(v => ({ ...v, path: expand(v.path, cwd, home) }))
+      // A note handed in for a kept copy stays with it for later shows.
+      const named = given.filter(v => v.note && v.path.startsWith(`${TMP}/kept/`) && kept.earlier.some(k => k.path === v.path && !k.note))
+      if (named.length) void $.process.run(['sh', '-c', 'while [ $# -gt 1 ]; do printf "%s" "$2" > "$1.txt"; shift 2; done', 'name', ...named.flatMap(v => [v.path, v.note!])]).catch(() => undefined)
+      const earlier = VIDEO.test(input.path) ? kept.earlier : [...given, ...kept.earlier.filter(k => !given.some(g => g.path === k.path))]
+      const compare = input.compare ?? earlier.at(-1)?.path
       const shown: Shown = {
         ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop())),
         origin: kept.real,
@@ -1440,6 +1490,7 @@ export const register: Register = on => {
         summary: input.summary,
         label: input.label,
         overlay: input.overlay,
+        note,
       }
       if (compare) {
         const label = input.compare_label
@@ -1451,8 +1502,8 @@ export const register: Register = on => {
         // A picture can step back through every earlier version; a clip
         // compares with the one before only, as each needs its frames cut.
         if (!shown.frames && earlier.length > 1) {
-          shown.history = input.compare && !earlier.includes(compare) ? [compare, ...earlier] : earlier
-          shown.historyAt = shown.history.indexOf(compare)
+          shown.history = input.compare && !earlier.some(v => v.path === compare) ? [{ path: compare }, ...earlier] : earlier
+          shown.historyAt = shown.history.findIndex(v => v.path === compare)
           remember(compare, shown.compare)
         }
         if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})

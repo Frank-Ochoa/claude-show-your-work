@@ -52,7 +52,7 @@ test('a narrow window shows the report under the player', async $ => {
 
 test('a picture with earlier versions draws with the version row', async $ => {
   const pic = { kind: 'image', path: '/tmp/a.png', source: '/tmp/a.png', width: 1600, height: 1060, title: 'Hero', generation: 1 }
-  const withHistory = { ...pic, changes: [{ title: 'Centred the play button' }], compare: { ...pic, title: 'Original' }, history: ['/tmp/v1.png', '/tmp/v2.png'] }
+  const withHistory = { ...pic, changes: [{ title: 'Centred the play button' }], compare: { ...pic, title: 'Original' }, history: [{ path: '/tmp/v1.png', note: 'Cloud photo' }, { path: '/tmp/v2.png' }], note: 'Centred play' }
   for (const columns of [160, 90]) {
     const output = `Shown.\nshow-your-work:${JSON.stringify(withHistory)}`
     const target = {
@@ -62,7 +62,24 @@ test('a picture with earlier versions draws with the version row', async $ => {
     } as any
     const mounted = await $.ui.mount(target)
     const tree = JSON.stringify(await mounted.drawn())
-    expect(tree.includes('Version')).toBe(true)
+    expect(tree.includes('History · 3')).toBe(true)
     expect(tree.includes('"Image"')).toBe(true)
   }
+})
+
+test('the history lists every version by what changed, newest first', async $ => {
+  const pic = { kind: 'image', path: '/tmp/a.png', source: '/tmp/a.png', width: 1600, height: 1060, title: 'Hero', generation: 1 }
+  const withHistory = { ...pic, compare: { ...pic, title: 'Original' }, history: [{ path: '/tmp/v1.png', note: 'Cloud photo' }, { path: '/tmp/v2.png', note: 'Real icons' }], note: 'Centred play' }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(withHistory)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'hist',
+    props: { tool_use_id: 'hist', tool: 'mcp__image-view__show_image', output, isErrored: false },
+    viewport: { columns: 160, rows: 50 },
+  } as any
+  const m = await $.ui.mount(target) as any
+  await m.press({ key: 'history' })
+  await m.redraw()
+  const tree = JSON.stringify(await m.drawn())
+  expect(tree.includes('VERSIONS · 3')).toBe(true)
+  expect(tree.indexOf('Centred play')).toBeLessThan(tree.indexOf('Cloud photo'))
 })
