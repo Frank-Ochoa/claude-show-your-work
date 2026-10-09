@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hero.gif" alt="Claude now shows its work, all inside your terminal app: a design session where concepts, feedback and v2 land in the chat" width="100%">
+  <img src="docs/hero.gif" alt="Claude now shows its work, all inside your terminal app: four concepts land in the chat, then Claude builds the page, records it and QAs it against the original, side by side" width="100%">
 </p>
 
 <h1 align="center">claude-show-your-work</h1>
