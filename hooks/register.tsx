@@ -105,9 +105,9 @@ async function pngSize($: EngineInterface, png: string) {
   return { width, height }
 }
 
-// Frames on disk are a cache: past 1.5 GB the oldest folders go, and a window
+// Frames on disk are a cache: past 500 MB the oldest folders go, and a window
 // that plays one again decodes it again (ensureChunk). The newest two stay.
-const FRAMES_CAP_KB = 1_500_000
+const FRAMES_CAP_KB = 500_000
 function trimFrames($: EngineInterface) {
   return $.process.run(['sh', '-c',
     'cd "$0" 2>/dev/null || exit 0; all=$(ls -dtr v* p* 2>/dev/null); n=$(printf "%s\\n" "$all" | grep -c .); ' +
