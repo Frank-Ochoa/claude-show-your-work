@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hero.gif" alt="Claude now shows its work, all inside your terminal app. None of the chaos, none of the context switching, all of the productivity. Don't wait 40 minutes to see what your agent did: stay in the loop throughout." width="100%">
+  <img src="docs/hero.gif" alt="Claude now shows its work right in your terminal: it designs a Tern landing page, records the homepage and shows the desktop, tablet and phone breakpoints, all inline in the chat" width="100%">
 </p>
 
 <h1 align="center">claude-show-your-work</h1>
@@ -18,6 +18,32 @@
 </p>
 
 ---
+
+## See it work
+
+<p align="center"><a href="docs/launch.mp4"><b>▶ Watch the full launch film (1:14)</b></a></p>
+
+### Website design
+
+Concepts, the built page recorded scrolling, and every breakpoint, each landing in the chat as it's done (the GIF at the top).
+
+### Product features
+
+Claude builds the feature, then runs real QA on it and shows you the recording with every check ticking as it happens.
+
+<p align="center"><img src="docs/product-features.gif" alt="A new-trip form built and QA'd: date range, email validation, invites and create trip, 8 of 8 checks passing in the sidebar" width="100%"></p>
+
+### Video workflows
+
+A character sheet, then a vertical ad made from it, with the video's structure (hook, problem, product, proof, CTA) laid out beside the player.
+
+<p align="center"><img src="docs/video-workflows.gif" alt="A character sheet for a UGC persona lands in the chat, then an Instagram reel made from it plays with a Video structure sidebar" width="100%"></p>
+
+### And more
+
+<p align="center"><img src="docs/and-more.gif" alt="Use cases rolling past: website design, product features, video workflows, bug testing, motion graphics, pitch decks and more" width="100%"></p>
+
+<p align="center"><img src="docs/end-card.jpg" alt="show-your-work, with the two install commands" width="100%"></p>
 
 ## The problem
 
