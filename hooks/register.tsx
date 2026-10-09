@@ -783,21 +783,8 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
   const playhead = Math.min(segments - 1, Math.round((one.frame / Math.max(1, frames.count - 1)) * (segments - 1)))
   one.segments = segments
 
-  // Playing: the bar is one cheap line of text. Paused: every cell is a button
-  // that jumps there.
-  if (one.timer) {
-    return (
-      <Box flexDirection="row" flexWrap="nowrap" width={width}>
-        <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media, shown)} />
-        <Text dimColor> {elapsed} </Text>
-        <Text>{'━'.repeat(playhead)}●</Text>
-        <Text dimColor>{'─'.repeat(Math.max(0, segments - playhead - 1))}</Text>
-        <Text dimColor> {total}</Text>
-      </Box>
-    )
-  }
-
-  // Paused: the bar is ~20 wide buttons, each a stretch you can jump to.
+  // ~20 wide buttons, each a stretch you can jump to, playing or paused: the
+  // bar redraws once a second, so the buttons cost little.
   const chunks = barChunks(segments, playhead)
 
   return (
