@@ -41,6 +41,8 @@ export type Shown = {
   compare?: Shown
   /** Earlier kept versions of the same file, oldest first; compare is the last. */
   history?: string[]
+  /** Which of history the compared side starts on. */
+  historyAt?: number
   // Original and Updated merged into one clip, side by side, and its size
   pair?: Frames
   pairWidth?: number

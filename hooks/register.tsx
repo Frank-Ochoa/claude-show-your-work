@@ -328,6 +328,14 @@ export function timesThatMean(changes: KeyChange[] | undefined, isVideo: boolean
   return isPointing ? changes : changes.map(({ at: _, ...c }) => c)
 }
 
+// A list as given: an array, or the same array sent as JSON text.
+export function listOf(value: unknown): string[] {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return value ? [value] : [] }
+  }
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+}
+
 // Every shown file is kept as it was then, so an old row keeps its picture
 // when the file is overwritten, and showing the same path again after edits
 // compares against the version before, with every earlier one a step away.
@@ -718,12 +726,12 @@ function remember(path: string, made: Shown) {
 
 // Several earlier versions: one row of numbers, the one on screen lit.
 // The last is the new version; any other shows on the compared side.
-function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
+function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: number) {
   const { Box, Button, Text } = ui
   const history = shown.history!
   const one = player(site)
   const latest = history.length
-  const on = one.isCompare ? one.step ?? latest - 1 : latest
+  const on = one.isCompare ? one.step ?? shown.historyAt ?? latest - 1 : latest
   const go = (to: number) => () => {
     if (one.isSplit) split($, site, shown, false)
     if (to === latest) return flip($, site, shown, false)
@@ -734,22 +742,25 @@ function Steps(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
       redraw($, site)
     }).catch(() => $.ui.toast('That version is gone'))
   }
-  const first = Math.max(0, latest - 7)
+  // Each number is a full button, five columns to aim at; as many as fit,
+  // keeping the one on screen in view.
+  const fits = Math.max(3, Math.floor((width - 10) / 6))
+  const first = Math.max(0, Math.min(latest + 1 - fits, on - Math.floor(fits / 2)))
+  const last = Math.min(latest, first + fits - 1)
 
   return (
     <Box key="steps" flexDirection="row" gap={1}>
       <Text dimColor>Version</Text>
       {first > 0 && <Text dimColor>…</Text>}
-      {Array.from({ length: latest - first + 1 }, (_, k) => first + k).map(i => (
-        i === on
-          ? <Button key={`v-${i}`} variant="primary" label={`${i + 1}`} onPress={go(i)} />
-          : <Button key={`v-${i}`} plain label={`${i + 1}`} onPress={go(i)} />
+      {Array.from({ length: last - first + 1 }, (_, k) => first + k).map(i => (
+        <Button key={`v-${i}`} variant={i === on ? 'primary' : 'secondary'} label={`${i + 1}`} onPress={go(i)} />
       ))}
+      {last < latest && <Text dimColor>…</Text>}
     </Box>
   )
 }
 
-function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
+function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown, width = 40) {
   const { Box, Button } = ui
   if (!shown.compare) return null
   const one = player(site)
@@ -764,7 +775,7 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
   }
 
   return (
-    hasSteps ? Steps(ui, $, site, shown) : (
+    hasSteps ? Steps(ui, $, site, shown, width) : (
       <Box flexDirection="row" gap={1}>
         <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={shown.compare.label ?? 'Original'} onPress={pick(true)} />
         <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={shown.label ?? 'Updated'} onPress={pick(false)} />
@@ -970,7 +981,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
     <Box flexDirection="column" width={width} height={height} overflow="hidden" backgroundColor={SIDEBAR}>
       {shown.compare && (
         <Box width={width} backgroundColor={TOPBAR} paddingX={2} paddingY={1}>
-          {Tabs(ui, $, site, shown)}
+          {Tabs(ui, $, site, shown, width - 4)}
         </Box>
       )}
       <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -1146,7 +1157,7 @@ async function Viewer(
         <Box flexDirection="row" columnGap={2}>
           {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
           {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
-          {!isWide && !hasReport && Tabs(ui, $, site, shown)}
+          {!isWide && !hasReport && Tabs(ui, $, site, shown, box.columns - 16)}
         </Box>
         <Box flexDirection="row" columnGap={2}>
           {opener}
@@ -1312,6 +1323,7 @@ const TOOL_INPUT = {
     checks: CHECKS,
     compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
     compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
+    versions: { type: 'array', items: { type: 'string' }, description: 'Earlier versions of this picture you still have, oldest first (absolute paths): the user can click through them all. Versions shown before are added on their own' },
     label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
     compare_label: { type: 'string', description: 'Name of the compared side. Leave unset so it reads "Original"; set it only when the user asks for other names' },
     overlay: {
@@ -1409,12 +1421,14 @@ export const register: Register = on => {
     freshCalls.add(e.tool_use_id)
     const input = e as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
-      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay
+      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
       const kept = await keepVersion($, input.path).catch(() => ({ real: input.path!, copy: input.path!, earlier: [] as string[] }))
-      const compare = input.compare ?? kept.earlier.at(-1)
+      // Every earlier version: the ones handed in, then the ones shown before.
+      const earlier = VIDEO.test(input.path) ? kept.earlier : [...new Set([...listOf(input.versions).map(v => expand(v, cwd, home)), ...kept.earlier])]
+      const compare = input.compare ?? earlier.at(-1)
       const shown: Shown = {
         ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop())),
         origin: kept.real,
@@ -1436,8 +1450,10 @@ export const register: Register = on => {
         }
         // A picture can step back through every earlier version; a clip
         // compares with the one before only, as each needs its frames cut.
-        if (!input.compare && !shown.frames && kept.earlier.length > 1) {
-          shown.history = kept.earlier
+        if (!shown.frames && earlier.length > 1) {
+          shown.history = input.compare && !earlier.includes(compare) ? [compare, ...earlier] : earlier
+          shown.historyAt = shown.history.indexOf(compare)
+          remember(compare, shown.compare)
         }
         if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})
       }

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, listOf } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -193,4 +193,11 @@ test('times only stay when they point somewhere', () => {
   expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], false)!.every(c => c.at === undefined)).toBe(true)
   expect(timesThatMean([{ title: 'a', at: 2 }], true)![0].at).toBe(2)
   expect(timesThatMean(undefined, true)).toBeUndefined()
+})
+
+test('a list of paths arrives as an array or as JSON text', () => {
+  expect(listOf(['/a', '/b'])).toEqual(['/a', '/b'])
+  expect(listOf('["/a","/b"]')).toEqual(['/a', '/b'])
+  expect(listOf('/a')).toEqual(['/a'])
+  expect(listOf(undefined)).toEqual([])
 })
