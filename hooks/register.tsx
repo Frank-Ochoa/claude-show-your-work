@@ -95,6 +95,24 @@ export function expand(path: string, base: string, homeDir: string): string {
   return `${base.replace(/\/$/, '')}/${p}`
 }
 
+// A name with its look-alike spaces made plain: macOS writes a narrow
+// no-break space before AM/PM in screenshot names, which a typed path lacks.
+export const looseName = (name: string) =>
+  name.normalize('NFC').replace(/[  -   　]/g, ' ')
+
+// The file a path means: as given when it exists, else the one entry in its
+// folder whose name matches once spaces are made plain.
+async function locate($: EngineInterface, raw: string): Promise<string> {
+  const path = expand(raw, cwd, home)
+  if (await $.fs.stat(path).then(() => true, () => false)) return path
+  const cut = path.lastIndexOf('/')
+  const dir = path.slice(0, cut) || '/'
+  const want = looseName(path.slice(cut + 1))
+  const hit = (await $.fs.list(dir).catch(() => [])).find(f => looseName(f.name) === want)
+
+  return hit ? `${dir.replace(/\/$/, '')}/${hit.name}` : path
+}
+
 export const frameFile = (frames: Frames, i: number) => `${frames.dir}/f${String(i + 1).padStart(5, '0')}.png`
 
 // How fast to sample a clip so it stays under MAX_FRAMES.
@@ -1941,18 +1959,20 @@ export const register: Register = on => {
 
   on('tool.call', { tool: /^mcp__show-your-work__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
-    const input = e as unknown as {
+    const input = { ...e } as unknown as {
       path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; previous?: string; changes_title?: string
     }
     if (!input.path) return { deny: 'A path is needed.' }
     try {
+      input.path = await locate($, input.path)
+      if (input.compare) input.compare = await locate($, input.compare)
       const note = noteOf(input.changes, input.change, input.title)
       const parent = handleOf(input.previous)
       const kept = await storeVersion($, input.path, note, input.title, parent)
         .catch(() => ({ real: input.path!, copy: input.path!, id: '', chain: [] as { path: string; note?: string; id: string }[], missing: undefined as string | undefined }))
       // Every earlier version: the ones handed in, then the ones shown before.
-      const given = versionsOf(input.versions).map(v => ({ ...v, path: expand(v.path, cwd, home) }))
+      const given = await Promise.all(versionsOf(input.versions).map(async v => ({ ...v, path: await locate($, v.path) })))
       const earlier = [...given, ...kept.chain.filter(k => !given.some(g => g.path === k.path))]
       const compare = input.compare ?? earlier.at(-1)?.path
       const shown: Shown = {

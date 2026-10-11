@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf, looseName } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -243,4 +243,10 @@ test('a handle is read from #id or id', () => {
   expect(handleOf(' 7f3a ')).toBe('7f3a')
   expect(handleOf('')).toBeUndefined()
   expect(handleOf(undefined)).toBeUndefined()
+})
+
+test('a typed screenshot name matches the narrow-space one macOS writes', () => {
+  expect(looseName('Screenshot 2026-10-04 at 11.37.02 AM.png')).toBe(looseName('Screenshot 2026-10-04 at 11.37.02 AM.png'))
+  expect(looseName('a b.png')).toBe('a b.png')
+  expect(looseName('café.png')).toBe(looseName('café.png'))
 })

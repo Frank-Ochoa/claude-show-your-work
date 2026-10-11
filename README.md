@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="docs/hero.gif" alt="Claude designs a Tern landing page, records the homepage and shows the desktop, tablet and phone breakpoints, all inline in the terminal" width="100%">
+  <img src="docs/homepage.jpg" alt="A recording of the Tern homepage plays in the terminal, with the list of what changed beside it" width="100%">
+  <img src="docs/concepts.jpg" alt="Four landing page concepts for Tern shown in the chat" width="49%">
+  <img src="docs/breakpoints.jpg" alt="The Tern homepage at desktop, tablet and phone sizes shown in the chat" width="49%">
   <br><sub>Claude designs a landing page, records it scrolling and shows you every screen size, right in the chat.</sub>
 </p>
 
@@ -21,7 +23,7 @@ It works in Ghostty and kitty on macOS. It's free and open source.
 
 ```
 # in Claude Code
-/plugin marketplace add iamumeransari/claude-show-your-work
+/plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git
 /plugin install show-your-work@iamumeransari
 
 # in your terminal, for videos
@@ -44,7 +46,7 @@ It really adds up when you run a few Claude sessions at once, or go back and for
 
 ### It tests your app and shows you the recording
 
-<p align="center"><img src="docs/product-features.gif" alt="A new-trip form gets built and QA'd: date range, email check, invites and create trip, with 8 of 8 checks passing in the sidebar" width="100%"></p>
+<p align="center"><img src="docs/qa.jpg" alt="A new-trip form gets built and QA'd: date range, email check, invites and create trip, with 8 of 8 checks passing in the sidebar" width="100%"></p>
 
 Claude builds the feature, then runs real QA on it: it clicks through your app like a user would (with Playwright), records it, and plays the recording right in the chat. Here's everything you get with it:
 
@@ -62,11 +64,12 @@ It works for screenshots too: Claude can show you a before and after picture wit
 
 ### It's not just for code
 
-<p align="center"><img src="docs/video-workflows.gif" alt="A character sheet for an ad persona shows up in the chat, then a vertical ad made from it plays, with the ad's structure listed next to it" width="100%"></p>
+<p align="center">
+  <img src="docs/persona.jpg" alt="A character sheet for an ad persona shown in the chat" width="49%">
+  <img src="docs/reel.jpg" alt="A vertical video ad made from the persona plays, with the ad's structure listed next to it" width="49%">
+</p>
 
 Anything Claude makes, it can show you. Here it makes a character sheet, then a vertical video ad from it, and lists how the ad is put together (hook, problem, product, proof, call to action) next to the video.
-
-<p align="center"><img src="docs/and-more.gif" alt="Other things it shows: website designs, product features, video ads, bug testing, motion graphics, pitch decks and more" width="100%"></p>
 
 Landing page ideas, every screen size of a site, bug reports, animations, pitch decks: if Claude made it, it can show it.
 
@@ -80,7 +83,7 @@ Landing page ideas, every screen size of a site, bug reports, animations, pitch 
 
 ```
 # in Claude Code
-/plugin marketplace add iamumeransari/claude-show-your-work
+/plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git
 /plugin install show-your-work@iamumeransari
 
 # in your terminal, for videos
