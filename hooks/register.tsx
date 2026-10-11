@@ -1765,13 +1765,6 @@ async function flush($: EngineInterface) {
   }
 }
 
-// Rough sizes instead of exact ones, so nothing singles a file out.
-export function bucket(n: number, edges: number[]): string {
-  const i = edges.findIndex(e => n < e)
-
-  return i === -1 ? `${edges.at(-1)}+` : i === 0 ? `<${edges[0]}` : `${edges[i - 1]}-${edges[i]}`
-}
-
 // ── Updates ──────────────────────────────────────────────────────────────
 
 // Keeps the plugin current without the user turning on marketplace
@@ -2015,7 +2008,7 @@ export const register: Register = on => {
       const checks = [...(shown.checks ?? []), ...(shown.compare?.checks ?? [])]
       track(shown.frames ? 'video_shown' : 'image_shown', {
         format: (input.path.match(/\.([a-z0-9]+)$/i)?.[1] ?? 'none').toLowerCase().slice(0, 5),
-        ...(shown.frames ? { duration: bucket(shown.frames.duration, [5, 15, 30, 60, 120]), frames: bucket(shown.frames.count, [60, 180, 450, 900]) } : {}),
+        ...(shown.frames ? { duration: Math.round(shown.frames.duration * 10) / 10, frames: shown.frames.count } : {}),
         has_compare: !!shown.compare,
         is_side_by_side: !!shown.pair,
         is_revision: !!input.previous,

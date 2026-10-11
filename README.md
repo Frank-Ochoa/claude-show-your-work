@@ -46,10 +46,7 @@ It really adds up when you run a few Claude sessions at once, or go back and for
 
 ### It tests your app and shows you the recording
 
-<p align="center">
-  <img src="docs/qa-product.jpg" alt="A recording of the new-trip form plays in the chat, with what changed and the QA checks beside it" width="100%">
-  <img src="docs/qa-checks.jpg" alt="Close-up of the sidebar: all four changes listed and all 8 checks passed" width="100%">
-</p>
+<p align="center"><img src="docs/qa-product.jpg" alt="A recording of the new-trip form plays in the chat, with what changed and the QA checks beside it" width="100%"></p>
 
 Claude builds the feature, then runs real QA on it: it clicks through your app like a user would (with Playwright), records it, and plays the recording right in the chat. Here's everything you get with it:
 
@@ -154,7 +151,7 @@ No. Your pictures, videos and files never leave your computer.
 Only anonymous usage counts, so I can see how many people use it and what to improve. Each install gets a random ID that isn't linked to you, and the plugin sends things like:
 
 - that a session started, and which plugin version, Claude Code version and terminal it's running in
-- that an image or video was shown, and roughly what kind (file type, rough length, whether it had a before and after, how many changes and checks it listed, how many passed)
+- that an image or video was shown, and what kind (file type, a video's length, whether it had a before and after, how many changes and checks it listed, how many passed)
 - which buttons get used (play, compare, history, open page, save, copy path and so on)
 - when something goes wrong, as a kind of error (like "file missing"), never the message itself
 
@@ -163,18 +160,6 @@ It never sends file names, paths, URLs, titles, prompts, anything you type or an
 ### Is it free?
 
 Yes. It's open source under the MIT license.
-
-## Try it with the demo
-
-[`examples/pricing`](examples/pricing) has a pricing page with a broken billing toggle, plus a script that records the page before and after the fix.
-
-```bash
-cd examples/pricing && npm i playwright
-node qa.cjs before rec-before   # the broken version: 3 checks fail
-node qa.cjs after  rec-after    # the fixed version: all 5 pass
-```
-
-Then ask Claude: *"show me the QA, rec-after vs rec-before"*.
 
 <details>
 <summary><b>For developers</b></summary>
