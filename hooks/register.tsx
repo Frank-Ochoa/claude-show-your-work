@@ -1687,7 +1687,7 @@ const TOOL_INPUT = {
 // DO_NOT_TRACK=1, and nothing is sent while POSTHOG_KEY is empty.
 const POSTHOG_HOST = 'https://us.i.posthog.com'
 // The project API key: it can only add events, never read them, so it ships.
-const POSTHOG_KEY = ''
+const POSTHOG_KEY = 'phc_mLGFguVcH3Tei4txwqXFPU4xBgFDKThEZncahTv3LS3W'
 // Events wait here and go out together, at most once a minute and at exit.
 const FLUSH_MS = 60_000
 const MAX_QUEUED = 500
