@@ -1,19 +1,23 @@
 <p align="center">
   <img src="docs/hero.gif" alt="Claude now shows its work right in your terminal: it designs a Tern landing page, records the homepage and shows the desktop, tablet and phone breakpoints, all inline in the chat" width="100%">
+  <br><sub>Claude designs a landing page, records it scrolling and shows every breakpoint, right in the chat.</sub>
 </p>
 
 <h1 align="center">claude-show-your-work</h1>
 
 <p align="center"><b>Images and videos inline in Claude Code, right in your terminal.</b></p>
 
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/Claude_Code-plugin-D97757?logo=claude&logoColor=white" alt="Claude Code plugin"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/Ghostty_%7C_kitty-supported-3B82F6?logo=gnometerminal&logoColor=white" alt="Works in Ghostty and kitty"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
+  <a href="https://github.com/iamumeransari/claude-show-your-work/stargazers"><img src="https://img.shields.io/github/stars/iamumeransari/claude-show-your-work?style=flat&logo=github&color=EAB308" alt="GitHub stars"></a>
+</p>
+
 **show-your-work** is a Claude Code plugin that lets Claude show you images and play videos inside the terminal: screenshots of what it built, Playwright recordings of it clicking through your app, and before/after QA runs played side by side in sync. It works in **Ghostty** and **kitty** on macOS. It's free and open source (MIT).
 
 **Stop opening localhost to check what Claude did.** No tab-switching, no "let me go check".
-
-```
-/plugin marketplace add iamumeransari/claude-show-your-work
-/plugin install show-your-work@iamumeransari
-```
 
 <p align="center">
   <a href="#what-it-does">What it does</a> ·
@@ -40,10 +44,6 @@ Every change, every time. That's the chaos this removes.
 ## What it does
 
 Claude **shows its work** in the conversation, the moment it's done. Pictures appear inline, unasked. Videos play right there, by themselves. And every one stays in the chat: scroll up and everything Claude showed you is still there.
-
-### Website design
-
-Concepts, the built page recorded scrolling, and every breakpoint, each landing in the chat as it's done. That's the GIF at the top.
 
 ### Product features, with real QA
 
@@ -78,8 +78,6 @@ One row of controls:
 Half-screen terminal? In a narrow window the report moves **under** the player instead of beside it: the Original / Updated / Compare switch on top, then what changed and the QA in two columns (one, if it's narrower still). Nothing is cut off; long titles wrap.
 
 ## Install
-
-<p align="center"><img src="docs/end-card.jpg" alt="show-your-work, with the two install commands" width="100%"></p>
 
 ```
 /plugin marketplace add iamumeransari/claude-show-your-work
@@ -184,6 +182,8 @@ Edit `hooks/register.tsx`, then `/reload-plugins`. Check with `claude plugin val
 ## License
 
 [MIT](LICENSE)
+
+<p align="center"><a href="#install"><img src="docs/end-card.jpg" alt="show-your-work, with the two install commands" width="100%"></a></p>
 
 ---
 
