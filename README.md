@@ -74,7 +74,7 @@ Each time you start Claude Code, the plugin checks GitHub for a newer version, a
 
 Your pictures, videos and files never leave your computer.
 
-The plugin does send anonymous usage statistics, so that I can see how many people use it and what goes wrong. Each install gets a random ID that isn't connected to you, along with a profile of the setup it runs on: the plugin version, the Claude Code version, the terminal, the operating system, and whether ffmpeg is installed. It reports when a session starts, and when a picture or video is shown, along with the file type, the length of a video, whether there was a before and after, and how many changes and checks were listed and passed. It also reports which buttons are pressed, and the type of any error, such as "file missing".
+The plugin does send anonymous usage statistics, so that I can see how many people use it and what goes wrong. Each install gets a random ID and a made-up nickname (like "Swift Otter 42") that aren't connected to you, along with a profile of the setup it runs on: the plugin version, the Claude Code version, the terminal, the operating system, and whether ffmpeg is installed. It reports when a session starts, and when a picture or video is shown, along with the file type, the length of a video, whether there was a before and after, and how many changes and checks were listed and passed. It also reports which buttons are pressed, and the type of any error, such as "file missing".
 
 It never sends file names, paths, URLs, titles, prompts, or anything that you or Claude write. To turn it off, set `SHOW_YOUR_WORK_TELEMETRY=0` or `DO_NOT_TRACK=1`. It is also turned off whenever `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
 

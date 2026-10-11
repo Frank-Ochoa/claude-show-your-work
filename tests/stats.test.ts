@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isNewer, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
+import { isNewer, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
@@ -57,4 +57,11 @@ test('Linux gets its own ffmpeg notice, with a package manager instead of Homebr
   expect(n.text.includes('apt install ffmpeg')).toBe(true)
   expect(/brew/.test(n.text + n.prompt + n.message)).toBe(false)
   expect(noticeOf(new Error(noFfmpeg(true)), '/Users/u/a.mp4', '/Users/u').text.includes('brew install ffmpeg')).toBe(true)
+})
+
+test('each install gets a made-up name, the same every time', () => {
+  const id = '8f14e45f-ceea-467f-a9d3-6c1b7c8d2e11'
+  expect(nicknameOf(id)).toBe(nicknameOf(id))
+  expect(/^[A-Z][a-z]+ [A-Z][a-z]+ \d{1,3}$/.test(nicknameOf(id))).toBe(true)
+  expect(nicknameOf(id)).not.toBe(nicknameOf('0b7e0d1a-1234-4c4c-9a9a-aaaaaaaaaaaa'))
 })

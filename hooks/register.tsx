@@ -1868,6 +1868,18 @@ let base: Props = {}
 let queue: Event[] = []
 let isFlushing = false
 
+// A made-up name for an install, the same every time for one id, so profiles
+// read as "Swift Otter" rather than a UUID. Nothing in it comes from the person.
+const ADJECTIVES = ['Swift', 'Quiet', 'Brave', 'Clever', 'Sunny', 'Lucky', 'Bold', 'Calm', 'Eager', 'Gentle', 'Happy', 'Jolly', 'Keen', 'Lively', 'Mellow', 'Nimble', 'Plucky', 'Rapid', 'Snappy', 'Tidy', 'Witty', 'Zesty', 'Cosmic', 'Fuzzy']
+const ANIMALS = ['Otter', 'Falcon', 'Panda', 'Fox', 'Koala', 'Lynx', 'Heron', 'Badger', 'Gecko', 'Owl', 'Puffin', 'Raccoon', 'Seal', 'Tiger', 'Wombat', 'Yak', 'Bison', 'Crane', 'Dolphin', 'Ferret', 'Hedgehog', 'Lemur', 'Moose', 'Quokka']
+export function nicknameOf(id: string): string {
+  let h = 0
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  const n = Math.floor(h / ADJECTIVES.length) % 1000
+
+  return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[Math.floor(h / 1000) % ANIMALS.length]} ${n}`
+}
+
 async function startTelemetry($: EngineInterface, context: Props) {
   if (!POSTHOG_KEY) return
   const optOut = await $.env.get('SHOW_YOUR_WORK_TELEMETRY')
@@ -1884,7 +1896,7 @@ async function startTelemetry($: EngineInterface, context: Props) {
   // Each install is one anonymous person, keyed by its random id: the profile
   // holds the setup it runs on, never anything about who uses it.
   base = { ...context }
-  const profile = { $set: { ...context }, $set_once: { first_plugin_version: context.plugin_version } }
+  const profile = { $set: { ...context, name: nicknameOf(installId) }, $set_once: { first_plugin_version: context.plugin_version } }
   if (isNew) track('installed', profile)
   track('session_started', profile)
   $.clock.every(FLUSH_MS, () => void flush($))
