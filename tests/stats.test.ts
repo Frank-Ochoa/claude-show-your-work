@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isNewer, noticeOf, cantDraw, causeOf, NO_FFMPEG } from '../hooks/register'
+import { isNewer, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
@@ -49,4 +49,12 @@ test('a picture that cannot draw says why, and tells Claude it was not seen', ()
   expect(cantDraw('terminal', 'a.png', 'picture', 'id1').title).toBe("This terminal can't show pictures")
   expect(cantDraw('background', 'a.png', 'video', 'id1').command.includes('--resume id1')).toBe(true)
   for (const cause of ['tmux', 'terminal', 'background'] as const) expect(cantDraw(cause, 'a.png', 'picture', '').claude.includes('saw a notice')).toBe(true)
+})
+
+test('Linux gets its own ffmpeg notice, with a package manager instead of Homebrew', () => {
+  const n = noticeOf(new Error(noFfmpeg(false)), '/home/u/a.jpg', '/home/u')
+  expect(n.kind).toBe('no_ffmpeg')
+  expect(n.text.includes('apt install ffmpeg')).toBe(true)
+  expect(/brew/.test(n.text + n.prompt + n.message)).toBe(false)
+  expect(noticeOf(new Error(noFfmpeg(true)), '/Users/u/a.mp4', '/Users/u').text.includes('brew install ffmpeg')).toBe(true)
 })

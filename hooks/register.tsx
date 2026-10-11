@@ -114,15 +114,36 @@ export const sampleRate = (duration: number) =>
 
 export const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
 
+// macOS unless the session says Linux: every Linux path below is a branch
+// beside the macOS one, which stays as it was.
+let isMac = true
+// Opens a file or URL with the desktop's default app.
+const opener = () => (isMac ? 'open' : 'xdg-open')
+
+// A PNG's size from its header (bytes 16 to 24), without any tool.
+export function pngDims(base64: string): { width: number; height: number } | null {
+  const b = Uint8Array.from(atob(base64.slice(0, 44)), c => c.charCodeAt(0))
+  if (b.length < 24 || b[0] !== 0x89 || b[1] !== 0x50 || b[2] !== 0x4e || b[3] !== 0x47) return null
+  const at = (i: number) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0
+
+  return { width: at(16), height: at(20) }
+}
+
 // Finds a pasted image's original file by name with Spotlight (macOS).
 async function findPasted($: EngineInterface, name: string): Promise<string | null> {
   if (name.startsWith('/')) return name
+  if (!isMac) return null
   const found = await $.process.run(['mdfind', '-name', name])
 
   return found.stdout.split('\n').find(line => line.endsWith(`/${name}`)) ?? null
 }
 
 async function pngSize($: EngineInterface, png: string) {
+  if (!isMac) {
+    const d = pngDims(String((await $.fs.read(png, { as: 'bytes' }) as unknown as { base64: string }).base64 ?? ''))
+    if (!d || !d.width || !d.height) throw new Error(`not an image: ${png}`)
+    return d
+  }
   const dims = await $.process.run(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', png])
   const width = Number(/pixelWidth:\s*(\d+)/.exec(dims.stdout)?.[1] ?? 0)
   const height = Number(/pixelHeight:\s*(\d+)/.exec(dims.stdout)?.[1] ?? 0)
@@ -189,6 +210,14 @@ export const NO_FFMPEG =
   "videos need ffmpeg, and it isn't installed. Pictures still work. Install it with `brew install ffmpeg` " +
   '(Claude can run that for you), then restart Claude Code. No Homebrew? Install it first from https://brew.sh.'
 
+// On Linux ffmpeg also turns pictures other than PNG into PNG.
+export const NO_FFMPEG_LINUX =
+  "videos and pictures other than PNG need ffmpeg, and it isn't installed. Install it with your package manager, " +
+  'for example `sudo apt install ffmpeg` or `sudo dnf install ffmpeg` (Claude can run that for you), then restart Claude Code.'
+export const noFfmpeg = (mac: boolean) => (mac ? NO_FFMPEG : NO_FFMPEG_LINUX)
+export const FFMPEG_PROMPT_LINUX =
+  "Install ffmpeg for me with this machine's package manager (for example `sudo apt install ffmpeg`). Then show it again."
+
 // What the person pastes back so Claude installs ffmpeg and tries again.
 export const FFMPEG_PROMPT =
   'Install ffmpeg for me with `brew install ffmpeg`. If Homebrew isn\'t installed, tell me how to install it first. Then show the video again.'
@@ -204,6 +233,10 @@ export function noticeOf(err: unknown, path: string, homeDir = ''): Notice {
   const raw = String((err as Error)?.message ?? err)
   const shown = homeDir && path.startsWith(homeDir + '/') ? '~' + path.slice(homeDir.length) : path
   const name = path.split('/').pop() || path
+  if (raw.includes(NO_FFMPEG_LINUX)) return {
+    kind: 'no_ffmpeg', title: 'This needs ffmpeg', message: NO_FFMPEG_LINUX, prompt: FFMPEG_PROMPT_LINUX,
+    text: "ffmpeg isn't installed, so videos and pictures other than PNG can't show here. Copy the prompt and paste it to Claude to install it, or install it yourself, for example `sudo apt install ffmpeg`.",
+  }
   if (raw.includes(NO_FFMPEG)) return {
     kind: 'no_ffmpeg', title: 'Videos need ffmpeg', message: NO_FFMPEG, prompt: FFMPEG_PROMPT,
     text: "ffmpeg isn't installed, so this video can't play here. Pictures still work. Copy the prompt and paste it to Claude to install it, or run `brew install ffmpeg` yourself. No Homebrew? Get it from brew.sh first.",
@@ -270,7 +303,7 @@ const writeMeta = ($: EngineInterface, dir: string, meta: unknown) =>
 async function prepareVideo($: EngineInterface, real: string, title: string, key?: string): Promise<Shown> {
   if (!hasVideoTools) {
     hasVideoTools = (await Promise.all([exists($, ffmpeg), exists($, ffprobe)])).every(Boolean)
-    if (!hasVideoTools) throw new Error(NO_FFMPEG)
+    if (!hasVideoTools) throw new Error(noFfmpeg(isMac))
   }
   // The same file shown before: its folder, frames and size are already there.
   if (key) {
@@ -595,7 +628,10 @@ async function prepare($: EngineInterface, raw: string, title?: string, key?: st
     generation += 1
     png = `${TMP}/${real.split('/').pop()!.replace(/\.[^.]+$/, '')}-${generation}.png`
     await $.process.run(['mkdir', '-p', TMP])
-    const conv = await $.process.run(['sips', '-s', 'format', 'png', real, '--out', png])
+    if (!isMac && !(await exists($, ffmpeg))) throw new Error(noFfmpeg(false))
+    const conv = isMac
+      ? await $.process.run(['sips', '-s', 'format', 'png', real, '--out', png])
+      : await $.process.run([ffmpeg, '-v', 'error', '-y', '-i', real, '-frames:v', '1', png])
     if (conv.exitCode !== 0) throw new Error(`could not convert ${real}: ${conv.stderr.trim()}`)
   }
   // A picture travels as bytes, at most 2 MiB: shrink a big one.
@@ -604,8 +640,10 @@ async function prepare($: EngineInterface, raw: string, title?: string, key?: st
     generation += 1
     const small = `${TMP}/${png.split('/').pop()!.replace(/\.png$/i, '')}-${generation}-small.png`
     await $.process.run(['mkdir', '-p', TMP])
-    await $.process.run(['sips', '-Z', '1800', png, '--out', small])
-    png = small
+    const shrunk = isMac
+      ? await $.process.run(['sips', '-Z', '1800', png, '--out', small])
+      : await $.process.run([ffmpeg, '-v', 'error', '-y', '-i', png, '-vf', "scale='if(gt(iw,ih),min(1800,iw),-2)':'if(gt(iw,ih),-2,min(1800,ih))'", small]).catch(() => ({ exitCode: 1 }))
+    if (isMac || shrunk.exitCode === 0) png = small
   }
   generation += 1
 
@@ -653,6 +691,8 @@ export function versionsOf(value: unknown): { path: string; note?: string }[] {
 type Version = { id: string; parent?: string; note?: string; ext: string; title?: string; origin?: string }
 export const handleOf = (value: unknown) => (typeof value === 'string' ? value.trim().replace(/^#/, '').toLowerCase() : '') || undefined
 let storeDir = ''
+// The most a project's .show-your-work folder holds.
+const STORE_CAP_KB = 200_000
 async function storeOf($: EngineInterface): Promise<string> {
   if (storeDir) return storeDir
   for (const dir of [`${cwd || home}/.show-your-work`, `${TMP}/store`]) {
@@ -678,8 +718,12 @@ async function storeVersion($: EngineInterface, raw: string, note: string, title
   const r = await $.process.run(['sh', '-c',
     'cp -c "$1" "$0/$2$3" 2>/dev/null || cp "$1" "$0/$2$3" || exit 1\n' +
     'printf "%s" "$4" > "$0/$2.json"\n' +
-    'ls -t "$0"/*.json 2>/dev/null | tail -n +401 | while read f; do rm -f "${f%.json}".*; done; true',
-    dir, real, id, ext, JSON.stringify(meta)])
+    // Pictures and videos alike: kept 7 days, at most the newest 50, and at
+    // most 200 MB; the oldest go first, file and record together.
+    'find "$0" -maxdepth 1 -name "*.json" -mtime +7 | while read f; do rm -f "${f%.json}".*; done\n' +
+    'ls -t "$0"/*.json 2>/dev/null | tail -n +51 | while read f; do rm -f "${f%.json}".*; done\n' +
+    'for f in $(ls -tr "$0"/*.json 2>/dev/null); do [ "$(du -sk "$0" | cut -f1)" -le "$5" ] && break; [ "$f" = "$0/$2.json" ] && break; rm -f "${f%.json}".*; done; true',
+    dir, real, id, ext, JSON.stringify(meta), String(STORE_CAP_KB)])
   if (r.exitCode !== 0) return { real, copy: real, id, chain: [] }
   // Follow the links back, oldest first.
   const chain: { path: string; note?: string; id: string }[] = []
@@ -709,6 +753,27 @@ export function textOf(output: unknown): string {
     : Array.isArray(output)
       ? output.map(b => (b && typeof b === 'object' && 'text' in b ? String(b.text) : '')).join('\n')
       : ''
+}
+// What a show drew, kept out of Claude's context: the result carries only
+// "show-your-work:#id", and the data waits here and in the store beside the copy.
+const shownById = new Map<string, Shown>()
+export const markOf = (output: unknown) => textOf(output).split('\n').find(l => l.startsWith(MARK))?.slice(MARK.length).trim()
+async function shownOf($: EngineInterface, output: unknown): Promise<Shown | null> {
+  const mark = markOf(output)
+  if (!mark?.startsWith('#')) return parseShown(output)
+  const id = mark.slice(1)
+  if (!/^[0-9a-f]{4,12}$/.test(id)) return null
+  const known = shownById.get(id)
+  if (known) return known
+  const r = await $.process.run(['cat', `${await storeOf($)}/${id}.shown`]).catch(() => null)
+  if (!r || r.exitCode !== 0) return null
+  try {
+    const shown = JSON.parse(r.stdout) as Shown
+    shownById.set(id, shown)
+    return shown
+  } catch {
+    return null
+  }
 }
 export function parseShown(output: unknown): Shown | null {
   const text = textOf(output)
@@ -1395,8 +1460,9 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
     const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, '']
     let out = `${home}/Downloads/${name}`
     for (let n = 2; await $.fs.stat(out).then(() => true, () => false); n++) out = `${home}/Downloads/${stem} ${n}${ext}`
+    if (!isMac) await $.process.run(['mkdir', '-p', `${home}/Downloads`])
     const r = await $.process.run(['cp', source, out])
-    if (r.exitCode === 0) await $.process.run(['open', '-R', out])
+    if (r.exitCode === 0) await $.process.run(isMac ? ['open', '-R', out] : ['xdg-open', `${home}/Downloads`]).catch(() => undefined)
     done(r, `Saved to Downloads/${out.split('/').pop()}`)
   }
 
@@ -1405,7 +1471,7 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
       {!source.startsWith(`${home}/Downloads/`) ? (
         <Button key="keep" plain dimColor label="Save to Downloads" onPress={() => { act('save'); void keep() }} />
       ) : (
-        <Button key="reveal" plain dimColor label="Show in Finder" onPress={() => act('reveal') || void $.process.run(['open', '-R', source]).then(r => done(r, 'Shown in Finder'))} />
+        <Button key="reveal" plain dimColor label={isMac ? 'Show in Finder' : 'Show in folder'} onPress={() => act('reveal') || void $.process.run(isMac ? ['open', '-R', source] : ['xdg-open', source.slice(0, source.lastIndexOf('/')) || '/']).then(r => done(r, isMac ? 'Shown in Finder' : 'Opened the folder'))} />
       )}
       {!isNarrow && (
         <Button
@@ -1454,9 +1520,9 @@ export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'vide
   }
   if (cause === 'terminal') return {
     title: `This terminal can't show ${what}`,
-    text: `"${name}" is ready, but this terminal can't draw ${what}. Open this chat in Ghostty or kitty to see it:`,
+    text: `"${name}" is ready, but this terminal can't draw ${what}. Open this chat in Ghostty to see it:`,
     command: `claude --resume${id ? ' ' + id : ''}`, label: 'Copy command', action: 'copy_resume_command',
-    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need Ghostty or kitty to see it.`,
+    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need Ghostty to see it.`,
   }
   return {
     title: `Can't show ${what} in a background session`,
@@ -1578,7 +1644,7 @@ async function Viewer(
       plain
       label={page ? '↗ Open page' : '↗ View'}
       onPress={() =>
-        act(page ? 'open_page' : 'open_file') || void $.process.run(['open', page ?? source]).then(r =>
+        act(page ? 'open_page' : 'open_file') || void $.process.run([opener(), page ?? source]).then(r =>
           $.ui.toast(r.exitCode === 0 ? `Opened ${(page ?? source.split('/').pop()!).slice(0, 60)}` : 'Could not open it'),
         )
       }
@@ -1737,7 +1803,7 @@ export function toolLine(tool: string, input: unknown, isRunning: boolean): stri
 
 const CHECKS = {
   type: 'array',
-  description: 'For QA: the checks run, each { name, ok, at? (seconds into the clip), url? (the page at that moment) }',
+  description: 'Checks run: { name, ok, at? (seconds), url? }',
   items: {
     type: 'object',
     properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' } },
@@ -1748,36 +1814,36 @@ const CHECKS = {
 const TOOL_INPUT = {
   type: 'object',
   properties: {
-    path: { type: 'string', description: 'Absolute path to the file (the "after" side when comparing)' },
-    title: { type: 'string', description: 'Short caption: what it is' },
-    change: { type: 'string', description: 'For QA: one line on what changed' },
-    pr: { type: 'string', description: 'For QA: the PR URL or number this belongs to' },
-    url: { type: 'string', description: 'The page this shows (a localhost or deployed URL): adds an Open page button' },
+    path: { type: 'string', description: 'Absolute path' },
+    title: { type: 'string', description: 'Short caption' },
+    pr: { type: 'string', description: 'PR URL or number' },
+    url: { type: 'string', description: 'The page shown; adds Open page' },
     changes: {
-  type: 'array',
-  description: 'The key changes to review: each { title (a few words), detail?, at? (seconds into the clip where it shows), url? }. They are listed in clip order.',
-  items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, at: { type: 'number' }, url: { type: 'string' } }, required: ['title'] },
-},
-    summary: {
-  type: 'array',
-  description: 'The QA in at most 3 lines, grouping the checks: each { label, ok, passed?, total? }',
-  items: { type: 'object', properties: { label: { type: 'string' }, ok: { type: 'boolean' }, passed: { type: 'number' }, total: { type: 'number' } }, required: ['label', 'ok'] },
-},
-    checks: CHECKS,
-    compare: { type: 'string', description: 'For QA: absolute path to the original version (before the change), image or video; adds Original/Updated tabs' },
-    compare_checks: { ...CHECKS, description: 'For QA: the same checks run on the compared side' },
-    changes_title: { type: 'string', description: 'A different heading for the changes list when they are not changes, e.g. "Video structure" for an ad broken into hook, problem, CTA. Leave unset for "What changed"' },
-    previous: { type: 'string', description: 'When this is a revised version of something you showed before: that show\'s handle (the #id its result gave). The one before becomes Original and every earlier version in the chain is listed under History. Leave it out for something new' },
-    versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier versions you still have but never showed, oldest first: each { path, note (what that version was, a few words) }. Only steps of this same work, never other directions or concepts. Versions shown before come from previous' },
-    label: { type: 'string', description: 'Name of this side when comparing. Leave unset so it reads "Updated"; set it only when the user asks for other names' },
-    compare_label: { type: 'string', description: 'Name of the compared side. Leave unset so it reads "Original"; set it only when the user asks for other names' },
-    overlay: {
-      type: 'string',
-      enum: ['center', 'none'],
-      description: 'A centre play button over a paused video (default), or none',
+      type: 'array',
+      description: 'What changed: { title, detail?, at? (seconds), url? }, in clip order',
+      items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, at: { type: 'number' }, url: { type: 'string' } }, required: ['title'] },
     },
+    summary: {
+      type: 'array',
+      description: 'QA in up to 3 lines: { label, ok, passed?, total? }',
+      items: { type: 'object', properties: { label: { type: 'string' }, ok: { type: 'boolean' }, passed: { type: 'number' }, total: { type: 'number' } }, required: ['label', 'ok'] },
+    },
+    checks: CHECKS,
+    compare: { type: 'string', description: 'Path to the before version' },
+    compare_checks: { ...CHECKS, description: 'The same checks on the before side' },
+    changes_title: { type: 'string', description: 'Heading for the changes list when not "What changed", e.g. "Video structure"' },
+    previous: { type: 'string', description: '#id of the version this revises' },
+    versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier unshown versions of this work, oldest first: { path, note }' },
+    label: { type: 'string', description: 'Name for this side if the user asks (default "Updated")' },
+    compare_label: { type: 'string', description: 'Name for the before side if the user asks (default "Original")' },
   },
   required: ['path'],
+}
+
+// A picture needs no timed checks, play button or custom list heading.
+const IMAGE_INPUT = {
+  ...TOOL_INPUT,
+  properties: Object.fromEntries(Object.entries(TOOL_INPUT.properties).filter(([k]) => !['checks', 'compare_checks', 'changes_title'].includes(k))),
 }
 
 // ── Usage stats ──────────────────────────────────────────────────────────
@@ -1934,12 +2000,13 @@ export const register: Register = on => {
     const started = await next(e)
     cwd = started.cwd
     sessionId = await $.session.id().catch(() => '')
-    const env = await $.process.run(['sh', '-lc', 'echo "home=$HOME"; echo "ff=$(command -v ffmpeg)"; echo "fp=$(command -v ffprobe)"'])
+    const env = await $.process.run(['sh', '-lc', 'echo "home=$HOME"; echo "ff=$(command -v ffmpeg)"; echo "fp=$(command -v ffprobe)"; echo "os=$(uname -s)"'])
     const got = (key: string) => env.stdout.split('\n').find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? ''
     const ff = got('ff'), fp = got('fp')
     home = got('home')
-    ffmpeg = ff || '/opt/homebrew/bin/ffmpeg'
-    ffprobe = fp || '/opt/homebrew/bin/ffprobe'
+    isMac = got('os') !== 'Linux'
+    ffmpeg = ff || (isMac ? '/opt/homebrew/bin/ffmpeg' : '/usr/bin/ffmpeg')
+    ffprobe = fp || (isMac ? '/opt/homebrew/bin/ffprobe' : '/usr/bin/ffprobe')
     hasVideoTools = false
     void (async () => {
       const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }
@@ -1963,6 +2030,7 @@ export const register: Register = on => {
         claude_code_version: (await $.session.version().catch(() => ({ base: '' }))).base ?? '',
         terminal,
         has_ffmpeg: !!ff,
+        os: isMac ? 'macos' : 'linux',
       })
       await checkForUpdate($, pluginVersion)
     })().catch(() => undefined)
@@ -1977,27 +2045,24 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'show_image',
       description:
-        "Show a local image (PNG, JPEG, WebP, GIF, TIFF) inline in the user's terminal. " +
-        "Use it unasked whenever you've made visual work the user should see: a rendered page or slide, a chart, a mockup. " +
-        'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, a few words each) and `summary` (the QA in up to 3 lines, ' +
-        'each with ok, passed and total), plus `compare` (the before file) when you have one and `url` for a page: they fill the sidebar the user ' +
-        'reviews with (what changed, QA, Original/Updated/Compare). Without them the user gets a bare picture. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Each show returns a handle (#id). When you show a revised version, pass `previous` with the handle of the version it replaces: that one becomes Original and the chain is listed under History. Pass `compare` to pick a different before. ' +
-        'The user sees the picture and you do not get it back, so Read the image only when you must check it yourself.',
-      inputSchema: TOOL_INPUT,
+        "Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\n" +
+        'Use it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. ' +
+        "Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\n" +
+        'When the image shows work you changed, also pass `changes` (what you changed, a few words each) and `compare` (an image of the same view from before the change), so the user can switch between Original, Updated and Compare. ' +
+        'Pass `summary` only for checks you actually ran. When you show a new version of something you showed earlier, pass `previous` with its #id so both stay in the same history.\n\n' +
+        "The image goes to the user's screen, not to you. Read the file yourself only if you need to check it.",
+      inputSchema: IMAGE_INPUT,
       isDeferred: false,
     })
     await $.tool.register({
       name: 'show_video',
       description:
-        "Play a local video (MP4, MOV, WebM, GIF) inline in the user's terminal in a player that starts by itself. " +
-        'Use it to show recordings you made: a Playwright run clicking through and checking a page, a rendered animation or film cut. ' +
-        'Whenever it shows work you changed, ALWAYS pass `changes` (what you changed, each with `at` = the second it shows in the clip), ' +
-        '`summary` (the QA in up to 3 lines, each with ok, passed and total), and `compare` (the before recording of the same flow, same script) ' +
-        'with `checks`/`compare_checks` (each with `at`) when you ran them, plus `url` for the page: they fill the sidebar the user reviews with ' +
-        '(what changed, QA, Original/Updated/Compare, synced side by side). Without them the user gets a bare player. Keep it to what really changed: a small edit is one change, and leave out `summary` if you ran no real checks; never pad either list. ' +
-        'Each show returns a handle (#id). When you show a revised version, pass `previous` with the handle of the version it replaces: that one becomes Original and the chain is listed under History. Pass `compare` to pick a different before. ' +
-        'Clips are cut into frames (up to 900 at up to 12 fps, 960 px wide), so keep them short. You do not see the video.',
+        "Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\n" +
+        'Use it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\n' +
+        'When the video shows work you changed, pass `changes`, each with `at` (the second it appears), and `checks` for what you tested, also with `at`. ' +
+        'For a fix, record the same steps on the old version and pass that file as `compare` with its own `compare_checks`; the two play side by side, in sync. ' +
+        'Pass `summary` only for checks you actually ran, and `previous` with an earlier #id when this is a new version of something you showed.\n\n' +
+        'Keep clips short: they are played as frames, at most 900 at up to 12 per second. You do not see the video.',
       inputSchema: TOOL_INPUT,
       isDeferred: false,
     })
@@ -2005,11 +2070,20 @@ export const register: Register = on => {
     return started
   })
 
-  // Once a draw has failed, every later turn knows: what was "shown" before
-  // was a notice, not the picture.
+  // While pictures draw, Claude is told up front that it can show its work,
+  // so it does so without being asked. Once a draw has failed, every later
+  // turn knows instead: what was "shown" was a notice, not the picture.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    if (canImage) return composed
+    if (!e.tools.some(t => TOOLS.includes(t))) return composed
+    if (canImage) {
+      return {
+        sections: [...composed.sections, {
+          id: 'show-your-work:show-visual-work', scope: 'session',
+          text: "This terminal shows pictures and videos inline. After visual work, screenshot or record it and show it with show_image or show_video before you say you're done, instead of telling the user to open a file or localhost. For a UI fix, show before and after.",
+        }],
+      }
+    }
     const why = cantDraw(drawCause, 'it', 'picture', sessionId).claude.replace(/, so the person saw a notice instead of it\./, '.')
     return {
       sections: [...composed.sections, {
@@ -2133,14 +2207,21 @@ export const register: Register = on => {
         has_pr: !!input.pr,
       })
 
-      const handle = kept.id
-        ? ` Shown as #${kept.id}${kept.chain.length ? `, version ${kept.chain.length + 1} after #${kept.chain.at(-1)!.id}` : ''}. To show a revised version of this, pass previous: "${kept.id}".`
-        : ''
-      const hint = (kept.missing ? ` #${kept.missing} wasn't found in this project, so this has no history.` : '') + handle
+      const handle = kept.id ? ` #${kept.id}${kept.chain.length ? `, version ${kept.chain.length + 1} after #${kept.chain.at(-1)!.id}` : ''}.` : ''
+      const hint = (kept.missing ? ` #${kept.missing} wasn't found, so this has no history.` : '') + handle
       const opening = canImage
-        ? `Shown to the user: ${shown.title} (${what}).`
+        ? `Shown: ${shown.title} (${what}).`
         : `Not shown: ${cantDraw(drawCause, shown.title, shown.frames ? 'video' : 'picture', sessionId).claude} Don't say it was shown.`
-      return { result: `${opening}${hint}\n${MARK}${JSON.stringify(shown)}` }
+      // Claude gets one short line; the drawing data stays out of its context.
+      let mark = JSON.stringify(shown)
+      if (kept.id) {
+        const saved = await $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0"', `${await storeOf($)}/${kept.id}.shown`, mark]).catch(() => null)
+        if (saved && saved.exitCode === 0) {
+          shownById.set(kept.id, shown)
+          mark = `#${kept.id}`
+        }
+      }
+      return { result: `${opening}${hint}\n${MARK}${mark}` }
     } catch (err) {
       const n = noticeOf(err, expand(input.path ?? '', cwd, home), home)
       notices.set(e.tool_use_id, n)
@@ -2184,7 +2265,7 @@ export const register: Register = on => {
     const key = `${version}|${versions.get(e.requestId) ?? 0}|${e.viewport?.columns ?? 0}|${e.viewport?.rows ?? 0}`
     const kept = drawn.get(e.requestId)
     if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
-    const shown = parseShown(props.output)
+    const shown = await shownOf($, props.output)
     if (!shown) return next(e)
     const view = atStep(shown, e.requestId)
     const tree = await Viewer($, e, view, e.requestId, false, e.viewport)

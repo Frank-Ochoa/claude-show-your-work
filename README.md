@@ -1,182 +1,96 @@
 <p align="center">
-  <img src="docs/homepage.jpg" alt="A recording of the Tern homepage plays in the terminal, with the list of what changed beside it" width="100%">
-  <img src="docs/concepts.jpg" alt="Four landing page concepts for Tern shown in the chat" width="49%">
-  <img src="docs/breakpoints.jpg" alt="The Tern homepage at desktop, tablet and phone sizes shown in the chat" width="49%">
-  <br><sub>Claude designs a landing page, records it scrolling and shows you every screen size, right in the chat.</sub>
+  <img src="docs/homepage.jpg" alt="A recording of the Tern homepage plays inside Claude Code, with the list of what changed beside it" width="100%">
 </p>
 
 <h1 align="center">claude-show-your-work</h1>
 
-<p align="center"><b>Claude Code now shows you images and videos, right in your terminal.</b></p>
+<p align="center">Claude Code can show you pictures and play videos in the terminal.</p>
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/Claude_Code-plugin-D97757?logo=claude&logoColor=white" alt="Claude Code plugin"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/Ghostty_%7C_kitty-supported-3B82F6?logo=gnometerminal&logoColor=white" alt="Works in Ghostty and kitty"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/Ghostty-supported-3B82F6?logo=gnometerminal&logoColor=white" alt="Works in Ghostty"></a>
   <a href="#install"><img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
-  <a href="https://github.com/iamumeransari/claude-show-your-work/stargazers"><img src="https://img.shields.io/github/stars/iamumeransari/claude-show-your-work?style=flat&logo=github&color=EAB308" alt="GitHub stars"></a>
 </p>
 
-**show-your-work** is a plugin for Claude Code. When Claude finishes something, it shows it to you right in the chat: a screenshot of the page it built, a video of it clicking through your app, or a full QA run of a fix with the before and after side by side. No browser, no localhost, no manual QA.
-
-It works in Ghostty and kitty on macOS. It's free and open source.
-
-```
-# in Claude Code
-/plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git
-/plugin install show-your-work@iamumeransari
-
-# in your terminal, for videos
-brew install ffmpeg
-```
-
-## Who it's for
-
-People who use Claude Code in a terminal like Ghostty and are tired of switching windows to see what Claude made.
-
-**Designing something?** Ask Claude for 4 concepts and they show up right in the chat. Before, Claude would build them as an HTML file you had to open, look through, then switch back to the terminal to say which one you liked. Now you never leave the terminal.
-
-**Making videos?** This is where it shines most. Ask Claude for an ad, an animation or a cut of a film and it plays right in the chat, with how it's put together (hook, problem, product, call to action) listed next to it. Ask for changes and watch the new version straight away, with every earlier version kept so you can compare. No exporting, no opening a video player, no dragging files around.
-
-**Building a feature?** You don't have to spin up localhost or do any manual QA. Claude does the work, tests it, and shows you a recording of it going through every change it made.
-
-It really adds up when you run a few Claude sessions at once, or go back and forth with Claude on the same thing.
-
-## What it does
-
-### It tests your app and shows you the recording
-
-<p align="center"><img src="docs/qa-product.jpg" alt="A recording of the new-trip form plays in the chat, with what changed and the QA checks beside it" width="100%"></p>
-
-Claude builds the feature, then runs real QA on it: it clicks through your app like a user would (with Playwright), records it, and plays the recording right in the chat. Here's everything you get with it:
-
-- **Checks that tick as the video plays.** Each check shows up at the moment it's tested, with a tick or a cross.
-- **A QA summary.** The results in up to three lines, like "Form: 8/8 passed".
-- **What changed.** A list of every change Claude made. Click one and the video jumps to that moment. The one on screen lights up.
-- **Original, Updated and Compare.** Switch between the version before the fix, the version after, or both side by side.
-- **Both versions in sync.** Compare lines the two recordings up frame by frame. If the old version loads slower, the video waits for it, so every step happens at the same time on both sides.
-- **What's different right now.** A line under the video says what differs at that moment, for example `Annual toggle updates prices · Original ✗ → Updated ✓`.
-- **The same checks on both sides.** You see which checks failed before the fix and pass after it.
-- **History.** When Claude revises something more than once, every earlier version is kept, so you can go back and compare.
-- **Open page.** Jumps to the localhost or live page at the point you're watching.
-
-It works for screenshots too: Claude can show you a before and after picture with the same view.
-
-### It's not just for code
-
-<p align="center">
-  <img src="docs/persona.jpg" alt="A character sheet for an ad persona shown in the chat" width="49%">
-  <img src="docs/reel.jpg" alt="A vertical video ad made from the persona plays, with the ad's structure listed next to it" width="49%">
-</p>
-
-Anything Claude makes, it can show you. Here it makes a character sheet, then a vertical video ad from it, and lists how the ad is put together (hook, problem, product, proof, call to action) next to the video.
-
-Landing page ideas, every screen size of a site, bug reports, animations, pitch decks: if Claude made it, it can show it.
-
-### Small things that help
-
-- Under every picture and video there are buttons to **open the page** in your browser, **save the file** to Downloads, or **copy its path** to paste back to Claude.
-- Everything stays in the chat. Scroll up and every picture and video from the session is still there.
-- If your terminal window is narrow, the layout rearranges itself so nothing gets cut off.
+claude-show-your-work is a plugin for Claude Code that lets Claude show you what it has made directly in the chat. That includes web pages, design concepts, charts, slides, generated images and videos. Claude can also record your app while it tests it, and play a fixed version next to the version from before the fix.
 
 ## Install
 
+Run these two commands inside Claude Code:
+
 ```
-# in Claude Code
 /plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git
 /plugin install show-your-work@iamumeransari
-
-# in your terminal, for videos
-brew install ffmpeg
 ```
 
-You'll need:
+The plugin needs macOS, Claude Code 2.1.287 or later, and the Ghostty terminal, which is able to draw pictures. To play videos you also need ffmpeg, which you can install with `brew install ffmpeg` or by asking Claude to install it for you. Once that's done, there is nothing else to set up.
 
-- **Ghostty or kitty.** These terminals can draw pictures, not just text.
-- **macOS.**
-- **Claude Code v2.1.287 or newer.**
+## Designs
 
-That's it. Claude starts showing you its work on its own.
+<p align="center">
+  <img src="docs/concepts.jpg" alt="Four landing page concepts for Tern shown in the chat" width="49%">
+  <img src="docs/breakpoints.jpg" alt="The Tern homepage at desktop, tablet and phone sizes shown in the chat" width="49%">
+</p>
 
-### Updates
+## Testing
 
-The plugin keeps itself up to date. Once a day it checks GitHub for a newer version, installs it, and tells you to restart Claude Code to use it.
+<p align="center"><img src="docs/qa-product.jpg" alt="A recording of a new-trip form being tested, with what changed and the checks beside it" width="100%"></p>
 
-To turn that off, set `SHOW_YOUR_WORK_AUTO_UPDATE=0`. You can then update by hand with `claude plugin update show-your-work@iamumeransari`.
+Claude can test a feature by clicking through it with Playwright, recording the run, and playing the recording in the chat. Each change Claude made is listed beside the video, and clicking one jumps to the moment it appears.
 
-## How does it work?
+When Claude fixes a bug, it can record the same steps on the old version and the new one. Compare plays the two recordings side by side and keeps them in sync, with the results of Claude's checks shown for each version.
 
-Two things make it possible.
+## Video and images
 
-**Claude Code mods.** Claude Code recently added mods, which let plugins change what you see inside Claude Code for the first time. Before that you were stuck with the default interface.
+<p align="center">
+  <img src="docs/persona.jpg" alt="A character sheet for an ad persona shown in the chat" width="49%">
+  <img src="docs/reel.jpg" alt="A vertical video ad made from that persona plays, with the ad's structure listed next to it" width="49%">
+</p>
 
-**Terminals that can draw pictures.** Most terminals can only show text, but newer ones like Ghostty and kitty support the kitty graphics protocol. A program hands the terminal a picture and the terminal draws it right in the window.
+## When something can't be shown
 
-Pictures are simple: the plugin hands them to the terminal. For videos, it cuts the clip into frames and plays them one after another, like a flipbook. It only prepares a couple of seconds at a time, the way video streaming works, so long videos don't eat up your memory or disk.
+If Claude tries to show a file and it doesn't work, you see a short note in its place that explains what went wrong. The file might be missing, it might not be a picture, the video might be damaged or have no picture in it, ffmpeg might not be installed, or your terminal might not be able to draw pictures. Each note has a button that copies a prompt, which you can paste back to Claude so it can fix the problem.
 
-Claude never sees the pictures or videos. It just tells the plugin which file to show, so it costs almost no tokens.
+## How it works
 
-## FAQ
+Claude Code supports mods, which let a plugin draw its own interface inside Claude Code. Ghostty can display pictures inside the terminal window. When Claude wants to show you something, it tells the plugin which file to use, and the plugin passes that file to the terminal to draw.
 
-### Does it use a lot of tokens?
+Videos are split into frames with ffmpeg and played back in order. The plugin only prepares a couple of seconds of frames at a time, so long videos don't use much memory or disk space.
 
-No. The picture or video goes straight to your screen and never to Claude. All Claude gets back is a short note that it was shown.
+Claude never sees the picture or video itself. It goes straight to your screen, so Claude doesn't spend any tokens looking at it.
 
-### Which terminals does it work in?
+## Terminals
 
-Ghostty and kitty. iTerm2, the Mac Terminal app and the VS Code terminal can't draw these pictures yet.
+The plugin works in Ghostty. Other terminals, including iTerm2, Terminal.app and the VS Code terminal, can't draw these pictures yet, and the plugin tells you when that's the case.
 
-### Does it work in tmux?
+It also works inside tmux, as long as you add `set -g allow-passthrough on` to your `~/.tmux.conf` file. If that setting is off, the plugin tells you how to turn it on.
 
-Not reliably yet. Turning on `set -g allow-passthrough on` in your tmux config can help, but pictures inside tmux are hit or miss.
+## Updates
 
-### Terminals could show images before. What's new?
+Each time you start Claude Code, the plugin checks GitHub for a newer version, at most once a day. If it finds one, it installs it and asks you to restart Claude Code. To turn this off, set `SHOW_YOUR_WORK_AUTO_UPDATE=0`. You can then update by hand with `claude plugin update show-your-work@iamumeransari`.
 
-True, terminals have been able to show images for years. What's new is doing it inside Claude Code, so Claude can show you its own work: playing videos, comparing before and after, and keeping it all in the chat.
+## Your data
 
-### Why not just use an editor like VS Code or Cursor?
+Your pictures, videos and files never leave your computer.
 
-If you already work in an editor, you might not need this. It's for people who work in the terminal and don't want to open another window every time Claude finishes something.
+The plugin does send anonymous usage statistics, so that I can see how many people use it and what goes wrong. Each install gets a random ID that isn't connected to you. The plugin reports when a session starts, along with the plugin version, the Claude Code version and the terminal. It reports when a picture or video is shown, along with the file type, the length of a video, whether there was a before and after, and how many changes and checks were listed and passed. It also reports which buttons are pressed, and the type of any error, such as "file missing".
 
-### Does it work on Linux or Windows?
+It never sends file names, paths, URLs, titles, prompts, or anything that you or Claude write. To turn it off, set `SHOW_YOUR_WORK_TELEMETRY=0` or `DO_NOT_TRACK=1`. It is also turned off whenever `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
 
-Not yet, only macOS for now.
+## Feedback
 
-### Does it send my screenshots anywhere?
-
-No. Your pictures, videos and files never leave your computer.
-
-### Does it collect any data?
-
-Only anonymous usage counts, so I can see how many people use it and what to improve. Each install gets a random ID that isn't linked to you, and the plugin sends things like:
-
-- that a session started, and which plugin version, Claude Code version and terminal it's running in
-- that an image or video was shown, and what kind (file type, a video's length, whether it had a before and after, how many changes and checks it listed, how many passed)
-- which buttons get used (play, compare, history, open page, save, copy path and so on)
-- when something goes wrong, as a kind of error (like "file missing"), never the message itself
-
-It never sends file names, paths, URLs, titles, prompts, anything you type or anything Claude writes. To turn it off, set `SHOW_YOUR_WORK_TELEMETRY=0`, or `DO_NOT_TRACK=1`. It's also off whenever `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
-
-### Is it free?
-
-Yes. It's open source under the MIT license.
+If you find a bug or have a question or an idea, please [open an issue](https://github.com/iamumeransari/claude-show-your-work/issues).
 
 <details>
 <summary><b>For developers</b></summary>
 
-The plugin gives Claude two tools:
-
-| Tool | For |
-|---|---|
-| `show_image` | a screenshot, a render, a chart, a mockup |
-| `show_video` | a Playwright recording, an animation, a film cut |
-
-For a before and after, Claude passes a bit more:
+The plugin gives Claude two tools, `show_image` and `show_video`. A plain call is just a path. For a before and after, Claude adds the old file and what it found:
 
 ```jsonc
 {
-  "path": "qa/after.webm",          // the updated run
-  "compare": "qa/before.webm",      // the original run, same script
+  "path": "qa/after.webm",          // the run on the fixed version
+  "compare": "qa/before.webm",      // the same steps on the old version
   "title": "Pricing page",
   "url": "http://localhost:3000/pricing",
   "changes": [                      // what changed, and the second it shows up
@@ -190,16 +104,14 @@ For a before and after, Claude passes a bit more:
 }
 ```
 
-Videos are cut into frames with ffmpeg (up to 12 per second, 960 px wide, 900 frames at most). You can also open any file yourself with `/img path/to/file.png`.
+Videos become frames at up to 12 per second, 960 px wide, 900 frames at most. You can open any file yourself with `/img path/to/file.png`.
 
-To work on the plugin, edit `hooks/register.tsx`, then run `/reload-plugins`. Check it with `claude plugin validate .` and `claude plugin test .`.
+To work on it, edit `hooks/register.tsx` and run `/reload-plugins`. `claude plugin validate .` and `claude plugin test .` check it.
 
 </details>
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Photography in the examples is from [Unsplash](https://unsplash.com), used under the Unsplash License.
 
-<p align="center"><a href="#install"><img src="docs/end-card.jpg" alt="show-your-work, with the two install commands" width="100%"></a></p>
-
-<sub>Photography from <a href="https://unsplash.com">Unsplash</a>, used under the Unsplash License.</sub>
+<p align="center"><a href="#install"><img src="docs/end-card.jpg" alt="show-your-work, with the install commands" width="100%"></a></p>

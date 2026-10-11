@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf, looseName } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf, looseName, pngDims } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -249,4 +249,11 @@ test('a typed screenshot name matches the narrow-space one macOS writes', () => 
   expect(looseName('Screenshot 2026-10-04 at 11.37.02 AM.png')).toBe(looseName('Screenshot 2026-10-04 at 11.37.02 AM.png'))
   expect(looseName('a b.png')).toBe('a b.png')
   expect(looseName('café.png')).toBe(looseName('café.png'))
+})
+
+test('a PNG header gives its size without any tool (Linux)', () => {
+  // 1x1 PNG
+  const onePx = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+  expect(pngDims(onePx)).toEqual({ width: 1, height: 1 })
+  expect(pngDims(btoa('not a png at all, just some text here'))).toBe(null)
 })
