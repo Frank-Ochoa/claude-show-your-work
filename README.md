@@ -24,13 +24,11 @@ It works in Ghostty and kitty on macOS. It's free and open source.
 /plugin install show-your-work@iamumeransari
 ```
 
-## Why I built it
+## Who it's for
 
-I kept doing the same thing after every change. Claude says "Done! I fixed the pricing page." Then I switch to the browser, find the localhost tab, reload, click through the page, and try to remember what it looked like before.
+People who use Claude Code in a terminal like Ghostty. You don't have to pull up another window, open an app, spin up localhost or test anything by hand. Claude does the work and shows it to you, with a recording of it going through every change it made.
 
-So I built a plugin that has Claude show me instead. It does the work, tests it, and shows me a recording of it going through every change it made. I don't have to open any other windows.
-
-If you live in the terminal, and especially if you run a few Claude sessions at once, this saves you a lot of back and forth.
+It really adds up when you run a few Claude sessions at once, or go back and forth with Claude on the same thing.
 
 ## What it does
 
