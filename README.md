@@ -20,8 +20,12 @@
 It works in Ghostty and kitty on macOS. It's free and open source.
 
 ```
+# in Claude Code
 /plugin marketplace add iamumeransari/claude-show-your-work
 /plugin install show-your-work@iamumeransari
+
+# in your terminal, for videos
+brew install ffmpeg
 ```
 
 ## Who it's for
@@ -74,21 +78,39 @@ Landing page ideas, every screen size of a site, bug reports, animations, pitch 
 
 ## Install
 
-Run these two commands in Claude Code:
-
 ```
+# in Claude Code
 /plugin marketplace add iamumeransari/claude-show-your-work
 /plugin install show-your-work@iamumeransari
+
+# in your terminal, for videos
+brew install ffmpeg
 ```
 
 You'll need:
 
 - **Ghostty or kitty.** These terminals can draw pictures, not just text.
 - **macOS.**
-- **ffmpeg** for videos. Install it with `brew install ffmpeg`.
 - **Claude Code v2.1.287 or newer.**
 
 That's it. Claude starts showing you its work on its own.
+
+### Keep it up to date
+
+Claude Code doesn't auto-update plugins from GitHub unless you turn it on. Open `/plugin`, go to **Marketplaces**, pick **iamumeransari** and choose **Enable auto-update**. Or add this to `~/.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "iamumeransari": {
+      "source": { "source": "github", "repo": "iamumeransari/claude-show-your-work" },
+      "autoUpdate": true
+    }
+  }
+}
+```
+
+To update by hand instead, run `claude plugin update show-your-work@iamumeransari` and restart Claude Code.
 
 ## How does it work?
 
