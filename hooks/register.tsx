@@ -1859,7 +1859,7 @@ const POSTHOG_KEY = 'phc_mLGFguVcH3Tei4txwqXFPU4xBgFDKThEZncahTv3LS3W'
 const FLUSH_MS = 60_000
 const MAX_QUEUED = 500
 
-type Props = Record<string, string | number | boolean | undefined>
+type Props = Record<string, string | number | boolean | undefined | Record<string, string | number | boolean | undefined>>
 type Event = { event: string; properties: Props; timestamp: string }
 
 let isOn = false
@@ -1881,9 +1881,12 @@ async function startTelemetry($: EngineInterface, context: Props) {
     await $.store.set('installId', installId)
   }
   isOn = true
-  base = { ...context, $process_person_profile: false }
-  if (isNew) track('installed')
-  track('session_started')
+  // Each install is one anonymous person, keyed by its random id: the profile
+  // holds the setup it runs on, never anything about who uses it.
+  base = { ...context }
+  const profile = { $set: { ...context }, $set_once: { first_plugin_version: context.plugin_version } }
+  if (isNew) track('installed', profile)
+  track('session_started', profile)
   $.clock.every(FLUSH_MS, () => void flush($))
 }
 
