@@ -30,8 +30,8 @@ let pastedNames: string[] = []
 // Why a show failed, as a kind: the message itself can hold a path.
 export function reasonOf(err: unknown): string {
   const m = String((err as Error)?.message ?? err)
-  if (/ENOENT|no such file|not found/i.test(m)) return 'missing_file'
   if (/ffmpeg|ffprobe/i.test(m)) return 'video_tools'
+  if (/ENOENT|no such file|not found/i.test(m)) return 'missing_file'
   if (/format|decode|convert|sips/i.test(m)) return 'unreadable'
   if (/timed? ?out/i.test(m)) return 'timeout'
   return 'other'
@@ -187,6 +187,15 @@ export function shiftTimes<T extends { at?: number }>(list: T[] | undefined, lea
   return list.map(c => (c.at === undefined ? c : { ...c, at: Math.max(0, +(c.at - lead).toFixed(2)) }))
 }
 
+// Found once, then trusted for the session; while missing it is looked for
+// again on each video, so installing it mid-session works.
+let hasVideoTools = false
+
+// What to tell Claude and the person when a video can't be cut into frames.
+export const NO_FFMPEG =
+  "videos need ffmpeg, and it isn't installed. Pictures still work. Install it with `brew install ffmpeg` " +
+  '(Claude can run that for you), then restart Claude Code. No Homebrew? Install it first from https://brew.sh.'
+
 // Cuts a clip into PNG frames the terminal can swap through.
 // A file as it is now: its path, size and modified time. The same unchanged
 // file shown again maps to the same frames folder and skips the decode; a
@@ -209,6 +218,10 @@ const writeMeta = ($: EngineInterface, dir: string, meta: unknown) =>
   $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0/meta.json"', dir, JSON.stringify(meta)]).catch(() => undefined)
 
 async function prepareVideo($: EngineInterface, real: string, title: string, key?: string): Promise<Shown> {
+  if (!hasVideoTools) {
+    hasVideoTools = (await Promise.all([exists($, ffmpeg), exists($, ffprobe)])).every(Boolean)
+    if (!hasVideoTools) throw new Error(NO_FFMPEG)
+  }
   // The same file shown before: its folder, frames and size are already there.
   if (key) {
     const dir = `${TMP}/v-${key}`
@@ -1857,6 +1870,7 @@ export const register: Register = on => {
     home = got('home')
     ffmpeg = ff || '/opt/homebrew/bin/ffmpeg'
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
+    hasVideoTools = false
     void (async () => {
       const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }
       const pluginVersion = manifest.version ?? '0.0.0'
