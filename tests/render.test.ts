@@ -99,7 +99,7 @@ test('the bar can be scrubbed while the clip plays', async $ => {
   expect(tree.includes('Pause')).toBe(true)
   expect(tree.includes('"seek-0"')).toBe(true)
   // Pressing near the end while playing moves the playhead there.
-  const last = [...tree.matchAll(/"seek-(\d+)"/g)].map(x => +x[1]).at(-1)
+  const last = [...tree.matchAll(/"seek-(\d+)"/g)].map(x => Number(x[1])).at(-1)
   await m.press({ key: `seek-${last}` })
   await m.redraw()
   const after = JSON.stringify(await m.drawn())

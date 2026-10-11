@@ -187,7 +187,7 @@ test('times only stay when they point somewhere', () => {
   expect(timesThatMean(same, true)!.every(c => c.at === undefined)).toBe(true)
   expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], true)!.map(c => c.at)).toEqual([1, 4])
   expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], false)!.every(c => c.at === undefined)).toBe(true)
-  expect(timesThatMean([{ title: 'a', at: 2 }], true)![0].at).toBe(2)
+  expect(timesThatMean([{ title: 'a', at: 2 }], true)![0]?.at).toBe(2)
   expect(timesThatMean(undefined, true)).toBeUndefined()
 })
 

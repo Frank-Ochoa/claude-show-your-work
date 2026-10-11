@@ -552,7 +552,8 @@ export function noteOf(changes: KeyChange[] | undefined, change: string | undefi
 // same array sent as JSON text.
 export function versionsOf(value: unknown): { path: string; note?: string }[] {
   if (typeof value === 'string') {
-    try { value = JSON.parse(value) } catch { return value ? [{ path: value }] : [] }
+    const text = value
+    try { value = JSON.parse(text) } catch { return text ? [{ path: text }] : [] }
   }
   if (!Array.isArray(value)) return []
   return value.flatMap(v =>
@@ -982,8 +983,9 @@ function pickVersion($: EngineInterface, site: string, shown: Shown, to: number)
   const history = shown.history!
   const one = player(site)
   if (one.isSplit) split($, site, shown, false)
-  if (to >= history.length) return flip($, site, shown, false)
-  void preparedOf($, history[to].path).then(version => {
+  const picked = history[to]
+  if (!picked) return flip($, site, shown, false)
+  void preparedOf($, picked.path).then(version => {
     one.step = to
     if (!one.isCompare) flip($, site, { ...shown, compare: version }, true)
     else draw($, site, version)
@@ -1484,7 +1486,9 @@ async function Viewer(
 
   // A tall, narrow picture still gets control rows wide enough to read on one
   // line each; the picture sits centred above them.
-  const rowWidth = Math.max(box.columns, CONTROLS_MIN)
+  // ...but never wider than the window has room for.
+  const controlsMin = Math.min(CONTROLS_MIN, columns - 8)
+  const rowWidth = Math.max(box.columns, controlsMin)
   const stage = (
     <Box flexDirection="column" width={rowWidth} alignItems="center">
       {Picture(ui, $, site, shown, media, box, pic)}
@@ -1504,7 +1508,7 @@ async function Viewer(
   )
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? Math.max(box.columns, CONTROLS_MIN) + SIDE + 3 : Math.max(box.columns, CONTROLS_MIN, below)) + 4}>
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? Math.max(box.columns, controlsMin) + SIDE + 3 : Math.max(box.columns, controlsMin, below)) + 4}>
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" gap={2} flexShrink={1}>
           <Text bold wrap="truncate-end">{shown.title}</Text>
