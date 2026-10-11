@@ -88,7 +88,7 @@ Yes. When Claude Code starts, the plugin checks GitHub for a new version once a 
 
 ### Does it collect any data?
 
-It sends anonymous usage counts, such as which versions are in use and how often images and videos are shown. It never sends files, file names, paths, prompts or anything you write. Set `SHOW_YOUR_WORK_TELEMETRY=0` to turn it off.
+It sends anonymous usage counts, such as which versions are in use and how often images and videos are shown. It never sends files, file names, paths, prompts or anything you write, and it never records your IP address or location. Set `SHOW_YOUR_WORK_TELEMETRY=0` to turn it off.
 
 ## Feedback
 

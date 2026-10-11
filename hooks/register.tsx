@@ -1882,7 +1882,7 @@ const POSTHOG_KEY = 'phc_mLGFguVcH3Tei4txwqXFPU4xBgFDKThEZncahTv3LS3W'
 const FLUSH_MS = 60_000
 const MAX_QUEUED = 500
 
-type Props = Record<string, string | number | boolean | undefined | Record<string, string | number | boolean | undefined>>
+type Props = Record<string, string | number | boolean | null | undefined | Record<string, string | number | boolean | undefined>>
 type Event = { event: string; properties: Props; timestamp: string }
 
 let isOn = false
@@ -1918,7 +1918,8 @@ async function startTelemetry($: EngineInterface, context: Props) {
   isOn = true
   // Each install is one anonymous person, keyed by its random id: the profile
   // holds the setup it runs on, never anything about who uses it.
-  base = { ...context }
+  // No location, ever: no IP is sent, and PostHog is told not to look one up.
+  base = { ...context, $ip: null, $geoip_disable: true }
   const profile = { $set: { ...context, name: nicknameOf(installId) }, $set_once: { first_plugin_version: String(context.plugin_version ?? "") } }
   if (isNew) track('installed', profile)
   track('session_started', profile)
