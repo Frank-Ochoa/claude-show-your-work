@@ -118,7 +118,7 @@ export const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String
 // beside the macOS one, which stays as it was.
 let isMac = true
 // Opens a file or URL with the desktop's default app.
-const opener = () => (isMac ? 'open' : 'xdg-open')
+const openCommand = () => (isMac ? 'open' : 'xdg-open')
 
 // A PNG's size from its header (bytes 16 to 24), without any tool.
 export function pngDims(base64: string): { width: number; height: number } | null {
@@ -265,7 +265,7 @@ export function noticeOf(err: unknown, path: string, homeDir = ''): Notice {
     message: `There's no file at ${shown}. Check the path (it may have moved or not been saved yet), then show it again.`,
     prompt: `There's no file at ${shown}. Find the right file and show it to me again.`,
   }
-  const detail = raw.split('\n')[0].replace(/\/(?:private\/)?tmp\/\S+|\S*\/\.show-your-work\/\S+/g, name).slice(0, 160)
+  const detail = (raw.split('\n')[0] ?? '').replace(/\/(?:private\/)?tmp\/\S+|\S*\/\.show-your-work\/\S+/g, name).slice(0, 160)
   return {
     kind: 'other', title: "Couldn't show it",
     text: `${name} couldn't be shown: ${detail}`,
@@ -1644,7 +1644,7 @@ async function Viewer(
       plain
       label={page ? '↗ Open page' : '↗ View'}
       onPress={() =>
-        act(page ? 'open_page' : 'open_file') || void $.process.run([opener(), page ?? source]).then(r =>
+        act(page ? 'open_page' : 'open_file') || void $.process.run([openCommand(), page ?? source]).then(r =>
           $.ui.toast(r.exitCode === 0 ? `Opened ${(page ?? source.split('/').pop()!).slice(0, 60)}` : 'Could not open it'),
         )
       }
@@ -1896,7 +1896,7 @@ async function startTelemetry($: EngineInterface, context: Props) {
   // Each install is one anonymous person, keyed by its random id: the profile
   // holds the setup it runs on, never anything about who uses it.
   base = { ...context }
-  const profile = { $set: { ...context, name: nicknameOf(installId) }, $set_once: { first_plugin_version: context.plugin_version } }
+  const profile = { $set: { ...context, name: nicknameOf(installId) }, $set_once: { first_plugin_version: String(context.plugin_version ?? "") } }
   if (isNew) track('installed', profile)
   track('session_started', profile)
   $.clock.every(FLUSH_MS, () => void flush($))
