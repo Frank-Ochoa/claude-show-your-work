@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isNewer, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
+import { isNewer, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg, consentOf } from '../hooks/register'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
@@ -64,4 +64,12 @@ test('each install gets a made-up name, the same every time', () => {
   expect(nicknameOf(id)).toBe(nicknameOf(id))
   expect(/^[A-Z][a-z]+ [A-Z][a-z]+ \d{1,3}$/.test(nicknameOf(id))).toBe(true)
   expect(nicknameOf(id)).not.toBe(nicknameOf('0b7e0d1a-1234-4c4c-9a9a-aaaaaaaaaaaa'))
+})
+
+test('updates and stats wait for a yes: no answer, or a malformed one, means off', () => {
+  expect(consentOf(undefined)).toBe(null)
+  expect(consentOf(null)).toBe(null)
+  expect(consentOf({ updates: true })).toBe(null)
+  expect(consentOf({ updates: true, stats: false })).toEqual({ updates: true, stats: false })
+  expect(consentOf({ updates: 'yes', stats: 1 })).toEqual({ updates: false, stats: false })
 })

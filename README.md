@@ -13,79 +13,91 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
 </p>
 
-claude-show-your-work is a plugin for Claude Code that lets Claude show you what it has made directly in the chat. That includes web pages, design concepts, charts, slides, generated images and videos. Claude can also record your app while it tests it, and play a fixed version next to the version from before the fix.
+claude-show-your-work is a Claude Code plugin that displays images and plays videos in the chat. Claude uses it to show what it has made, such as a web page, a design, a chart or a video, and to play recordings of your app while it tests it.
 
 ## Install
 
-Run these two commands inside Claude Code:
+Run these two commands in Claude Code:
 
 ```
 /plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git
 /plugin install show-your-work@iamumeransari
 ```
 
-The plugin needs macOS, Claude Code 2.1.287 or later, and the Ghostty terminal, which is able to draw pictures. To play videos you also need ffmpeg, which you can install with `brew install ffmpeg` or by asking Claude to install it for you. Once that's done, there is nothing else to set up.
+The plugin requires macOS, Claude Code 2.1.287 or later, and the Ghostty terminal. Videos also require ffmpeg, which you can install with `brew install ffmpeg` or by asking Claude to install it.
 
-## Designs
+## Usage
+
+Claude shows visual work without being asked. You can also ask for it directly, for example:
+
+- "Give me four directions for the homepage hero and show them side by side."
+- "Build the sign-up form, test it, and show me the recording."
+- "Fix the billing toggle and show me before and after."
+
+### Design
 
 <p align="center">
   <img src="docs/concepts.jpg" alt="Four landing page concepts for Tern shown in the chat" width="49%">
   <img src="docs/breakpoints.jpg" alt="The Tern homepage at desktop, tablet and phone sizes shown in the chat" width="49%">
 </p>
 
-## Testing
+Claude can show several design concepts side by side, and you choose one by replying. It can also show a finished page at desktop, tablet and phone widths in a single image.
+
+### Testing
 
 <p align="center"><img src="docs/qa-product.jpg" alt="A recording of a new-trip form being tested, with what changed and the checks beside it" width="100%"></p>
 
-Claude can test a feature by clicking through it with Playwright, recording the run, and playing the recording in the chat. Each change Claude made is listed beside the video, and clicking one jumps to the moment it appears.
+Claude can test a feature with Playwright, record the run, and play the recording in the chat. The changes it made are listed next to the video, and clicking a change jumps to that point. Each check is marked as passed or failed when the video reaches it.
 
-When Claude fixes a bug, it can record the same steps on the old version and the new one. Compare plays the two recordings side by side and keeps them in sync, with the results of Claude's checks shown for each version.
+For a bug fix, Claude records the same steps on the old and new versions. The Compare view plays both recordings side by side and keeps them in sync, even when one loads more slowly, with the check results for each version.
 
-## Video and images
+### Video
 
 <p align="center">
   <img src="docs/persona.jpg" alt="A character sheet for an ad persona shown in the chat" width="49%">
   <img src="docs/reel.jpg" alt="A vertical video ad made from that persona plays, with the ad's structure listed next to it" width="49%">
 </p>
 
-## When something can't be shown
+Videos play in the chat with a list beside them, such as the sections of an ad. When Claude makes a new version, the earlier ones stay in the history so you can compare them.
 
-If Claude tries to show a file and it doesn't work, you see a short note in its place that explains what went wrong. The file might be missing, it might not be a picture, the video might be damaged or have no picture in it, ffmpeg might not be installed, or your terminal might not be able to draw pictures. Each note has a button that copies a prompt, which you can paste back to Claude so it can fix the problem.
+Charts, slides, motion graphics and any other image or video file work the same way.
+
+## Errors
+
+If a file can't be shown, a note appears in its place with the reason: the file is missing, it isn't an image, the video is damaged or has no picture, ffmpeg isn't installed, or the terminal can't display images. The note has a button that copies a prompt for Claude to fix the problem.
 
 ## How it works
 
-Claude Code supports mods, which let a plugin draw its own interface inside Claude Code. Ghostty can display pictures inside the terminal window. When Claude wants to show you something, it tells the plugin which file to use, and the plugin passes that file to the terminal to draw.
+Claude Code mods let a plugin draw its own interface inside Claude Code, and Ghostty can display images in the terminal. Claude tells the plugin which file to show, and the plugin passes it to the terminal.
 
-Videos are split into frames with ffmpeg and played back in order. The plugin only prepares a couple of seconds of frames at a time, so long videos don't use much memory or disk space.
+Videos are split into frames with ffmpeg. The plugin prepares a few seconds of frames at a time, so long videos use little memory or disk space.
 
-Claude never sees the picture or video itself. It goes straight to your screen, so Claude doesn't spend any tokens looking at it.
+The image or video goes to your screen and not to Claude, so displaying it uses no tokens.
 
 ## Terminals
 
-The plugin works in Ghostty. Other terminals, including iTerm2, Terminal.app and the VS Code terminal, can't draw these pictures yet, and the plugin tells you when that's the case.
+The plugin works in Ghostty. iTerm2, Terminal.app and the VS Code terminal can't display these images, and the plugin tells you when that happens.
 
-It also works inside tmux, as long as you add `set -g allow-passthrough on` to your `~/.tmux.conf` file. If that setting is off, the plugin tells you how to turn it on.
+In tmux, add `set -g allow-passthrough on` to `~/.tmux.conf`. If the setting is off, the plugin shows you how to turn it on.
 
-## Updates
+## FAQ
 
-Each time you start Claude Code, the plugin checks GitHub for a newer version, at most once a day. If it finds one, it installs it and asks you to restart Claude Code. To turn this off, set `SHOW_YOUR_WORK_AUTO_UPDATE=0`. You can then update by hand with `claude plugin update show-your-work@iamumeransari`.
+### Does it update itself?
 
-## Your data
+Only if you allow it. The first time it runs, the plugin asks whether it may check GitHub for updates once a day. You can change your answer with `/show-your-work-settings`, or update by hand with `claude plugin update show-your-work@iamumeransari`.
 
-Your pictures, videos and files never leave your computer.
+### Does it collect any data?
 
-The plugin does send anonymous usage statistics, so that I can see how many people use it and what goes wrong. Each install gets a random ID and a made-up nickname (like "Swift Otter 42") that aren't connected to you, along with a profile of the setup it runs on: the plugin version, the Claude Code version, the terminal, the operating system, and whether ffmpeg is installed. It reports when a session starts, and when a picture or video is shown, along with the file type, the length of a video, whether there was a before and after, and how many changes and checks were listed and passed. It also reports which buttons are pressed, and the type of any error, such as "file missing".
-
-It never sends file names, paths, URLs, titles, prompts, or anything that you or Claude write. To turn it off, set `SHOW_YOUR_WORK_TELEMETRY=0` or `DO_NOT_TRACK=1`. It is also turned off whenever `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
+Only if you allow it, in the same question, and only anonymous counts: which versions are in use, how often images and videos are shown, which buttons are used, and what kind of errors happen. Your files never leave your computer, and it never sends file names, paths, prompts or anything you write. Set `SHOW_YOUR_WORK_TELEMETRY=0` to turn it off at any time.
 
 ## Feedback
 
-If you find a bug or have a question or an idea, please [open an issue](https://github.com/iamumeransari/claude-show-your-work/issues).
+To report a bug or suggest a change, [open an issue](https://github.com/iamumeransari/claude-show-your-work/issues).
 
 <details>
 <summary><b>For developers</b></summary>
 
-The plugin gives Claude two tools, `show_image` and `show_video`. A plain call is just a path. For a before and after, Claude adds the old file and what it found:
+The plugin gives Claude two tools, `show_image` and `show_video`. A basic call needs only a path. For a before and after, Claude also passes the old file and its results:
 
 ```jsonc
 {
@@ -106,7 +118,7 @@ The plugin gives Claude two tools, `show_image` and `show_video`. A plain call i
 
 Videos become frames at up to 12 per second, 960 px wide, 900 frames at most. You can open any file yourself with `/img path/to/file.png`.
 
-To work on it, edit `hooks/register.tsx` and run `/reload-plugins`. `claude plugin validate .` and `claude plugin test .` check it.
+To work on the plugin, edit `hooks/register.tsx` and run `/reload-plugins`. Check it with `claude plugin validate .` and `claude plugin test .`.
 
 </details>
 

@@ -6,7 +6,31 @@ import type { Check, Frames, KeyChange, Overlay, Shown, Summary } from '../types
 const PANE = 'show-your-work'
 // The tools, and their names from before the rename, so old windows still draw.
 const TOOLS = ['show_image', 'show_video'].map(t => `mcp__show-your-work__${t}`)
-const TMP = '/tmp/claude-show-your-work'
+// Frames and converted pictures. A private folder per user, chosen at session
+// start: a fixed name in the shared /tmp could be made first, or pointed
+// elsewhere, by another user on the same machine.
+let TMP = '/tmp/claude-show-your-work'
+export const PICK_TMP = [
+  'base="${TMPDIR:-/tmp}"; base="${base%/}"; d="$base/claude-show-your-work-$(id -u)"',
+  'mkdir -m 700 -p "$d" 2>/dev/null',
+  'if [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ]; then chmod 700 "$d"; printf "%s" "$d"; else mktemp -d "$base/claude-show-your-work-XXXXXX"; fi',
+].join('\n')
+// Deletes the oldest frame folders until the cache is under $1 KB, keeping the
+// newest two and the ones named in $2; only inside a folder this user owns.
+export const TRIM_SH = [
+  '[ -d "$0" ] && [ ! -L "$0" ] && [ -O "$0" ] && cd -P "$0" 2>/dev/null || exit 0',
+  'all=$(ls -dtr v* p* 2>/dev/null); n=$(printf "%s\\n" "$all" | grep -c .)',
+  'for d in $(printf "%s\\n" "$all" | head -n $((n > 2 ? n - 2 : 0))); do',
+  '  [ "$(du -sk . | cut -f1)" -le "$1" ] && break',
+  '  case " $2 " in *" $d "*) continue ;; esac',
+  '  [ -L "$d" ] || rm -rf "./$d"',
+  'done; true',
+].join('\n')
+// Deletes anything in the cache older than a week, without following links.
+export const CLEAN_SH = [
+  '[ -d "$0" ] && [ ! -L "$0" ] && [ -O "$0" ] || exit 0',
+  'find -P "$0" -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} + 2>/dev/null; true',
+].join('\n')
 const MARK = 'show-your-work:'
 const VIDEO = /\.(mp4|mov|m4v|webm|mkv|avi|gif)$/i
 // Frames a clip is cut into at most, and the rate it plays at below that.
@@ -20,6 +44,8 @@ const SIDE = 40
 const SIDEBAR = '#1d1e23'
 const WIDE_ENOUGH = 110
 const current = atom({ plugin: 'show-your-work', key: 'current' } as const, null)
+// Whether the one-time question about updates and usage stats is on screen.
+const asking = atom({ plugin: 'show-your-work', key: 'asking' } as const, false)
 
 let cwd = ''
 let home = ''
@@ -155,11 +181,10 @@ async function pngSize($: EngineInterface, png: string) {
 // Frames on disk are a cache: past 500 MB the oldest folders go, and a window
 // that plays one again decodes it again (ensureChunk). The newest two stay.
 const FRAMES_CAP_KB = 500_000
+// Folders this session is playing are never trimmed.
 function trimFrames($: EngineInterface) {
-  return $.process.run(['sh', '-c',
-    'cd "$0" 2>/dev/null || exit 0; all=$(ls -dtr v* p* 2>/dev/null); n=$(printf "%s\\n" "$all" | grep -c .); ' +
-    'for d in $(printf "%s\\n" "$all" | head -n $((n > 2 ? n - 2 : 0))); do [ "$(du -sk . | cut -f1)" -le "$1" ] && break; rm -rf "$d"; done; true',
-    TMP, String(FRAMES_CAP_KB)]).catch(() => undefined)
+  const inUse = [...watching.keys()].map(d => d.split('/').pop()!).join(' ')
+  return $.process.run(['sh', '-c', TRIM_SH, TMP, String(FRAMES_CAP_KB), inUse]).catch(() => undefined)
 }
 
 // A recording often opens on a blank page while the browser loads: white,
@@ -1975,6 +2000,32 @@ function jsonOf<T>(text: string | undefined, fallback: T): T {
   try { return text ? (JSON.parse(text) as T) : fallback } catch { return fallback }
 }
 
+// Updates and usage stats run only after the person says yes, once, in the
+// band above the prompt. An environment variable set to off wins over a yes.
+export type Consent = { updates: boolean; stats: boolean }
+export const consentOf = (value: unknown): Consent | null =>
+  !!value && typeof value === 'object' && 'updates' in value && 'stats' in value
+    ? { updates: (value as Consent).updates === true, stats: (value as Consent).stats === true }
+    : null
+const isOff = (value: string | undefined) => /^(0|false|off|no)$/i.test(value ?? '')
+let pluginVersion = '0.0.0'
+let statsContext: Props = {}
+
+// Starts what the person allowed. Without an answer yet, nothing runs.
+async function applyConsent($: EngineInterface) {
+  const consent = consentOf(await $.store.get('consent'))
+  if (!consent) return
+  if (consent.stats) await startTelemetry($, statsContext)
+  if (consent.updates) await checkForUpdate($, pluginVersion)
+}
+
+async function answer($: EngineInterface, consent: Consent) {
+  await $.store.set('consent', consent)
+  await update($, asking, () => false)
+  $.ui.toast(consent.updates || consent.stats ? 'Saved. Change it any time with /show-your-work-settings.' : 'Nothing will be sent or checked. Change it with /show-your-work-settings.')
+  await applyConsent($)
+}
+
 export async function checkForUpdate($: EngineInterface, current: string) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
   if (/^(0|false|off|no)$/i.test(off ?? '')) return
@@ -2015,6 +2066,8 @@ export const register: Register = on => {
     const started = await next(e)
     cwd = started.cwd
     sessionId = await $.session.id().catch(() => '')
+    const picked = await $.process.run(['sh', '-c', PICK_TMP]).catch(() => null)
+    if (picked && picked.exitCode === 0 && picked.stdout.trim().startsWith('/')) TMP = picked.stdout.trim()
     const env = await $.process.run(['sh', '-lc', 'echo "home=$HOME"; echo "ff=$(command -v ffmpeg)"; echo "fp=$(command -v ffprobe)"; echo "os=$(uname -s)"'])
     const got = (key: string) => env.stdout.split('\n').find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? ''
     const ff = got('ff'), fp = got('fp')
@@ -2025,7 +2078,7 @@ export const register: Register = on => {
     hasVideoTools = false
     void (async () => {
       const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }
-      const pluginVersion = manifest.version ?? '0.0.0'
+      pluginVersion = manifest.version ?? '0.0.0'
       const program = (await $.env.get('TERM_PROGRAM')) ?? ''
       const term = (await $.env.get('TERM')) ?? ''
       const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
@@ -2040,18 +2093,26 @@ export const register: Register = on => {
           drawCause = 'tmux'
         }
       }
-      await startTelemetry($, {
+      statsContext = {
         plugin_version: pluginVersion,
         claude_code_version: (await $.session.version().catch(() => ({ base: '' }))).base ?? '',
         terminal,
         has_ffmpeg: !!ff,
         os: isMac ? 'macos' : 'linux',
-      })
-      await checkForUpdate($, pluginVersion)
+      }
+      // Both turned off by environment variables: nothing to ask.
+      const statsOff = isOff(await $.env.get('SHOW_YOUR_WORK_TELEMETRY')) || /^(1|true)$/i.test((await $.env.get('DO_NOT_TRACK')) ?? '')
+      const updatesOff = isOff(await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE'))
+      if (!consentOf(await $.store.get('consent')) && !(statsOff && updatesOff)) await update($, asking, () => true)
+      await applyConsent($)
     })().catch(() => undefined)
     // Frames and converted pictures a week old go; a window that scrolls back
     // into view cuts its frames again from the source.
-    void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 ! -name kept -mtime +7 -exec rm -rf {} + 2>/dev/null; find ${TMP}/kept -type f -mtime +7 -delete 2>/dev/null; true`]).then(() => trimFrames($))
+    void $.process.run(['sh', '-c', CLEAN_SH, TMP]).then(() => trimFrames($))
+    await $.command.register({
+      name: 'show-your-work-settings',
+      description: 'Choose whether show-your-work checks for updates and sends anonymous usage stats',
+    })
     await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',
@@ -2118,6 +2179,27 @@ export const register: Register = on => {
     pastedNames = (e.attachments ?? []).filter(a => a.type === 'image' && a.filename).map(a => a.filename!)
 
     return next(e)
+  })
+
+  // The one-time question, a single line above the prompt.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if ((e.props as { hasSurvey?: boolean }).hasSurvey || !(await read($, asking))) return next(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
+
+    return (
+      <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+        <Text>show-your-work can check GitHub for updates once a day and send anonymous usage counts (never files, paths or prompts).</Text>
+        <Button key="both" variant="primary" label="Allow both" onPress={() => void answer($, { updates: true, stats: true })} />
+        <Button key="updates" label="Updates only" onPress={() => void answer($, { updates: true, stats: false })} />
+        <Button key="none" label="No thanks" onPress={() => void answer($, { updates: false, stats: false })} />
+      </Box>
+    )
+  })
+
+  on('command.run', { command: 'show-your-work-settings' }, async ($) => {
+    await $.store.set('consent', null)
+    await update($, asking, () => true)
+    return { text: 'Choose above the prompt whether show-your-work checks for updates and sends anonymous usage stats.' }
   })
 
   on('command.run', { command: 'img' }, async ($, e) => {
