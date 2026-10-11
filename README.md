@@ -15,7 +15,7 @@
   <a href="https://github.com/iamumeransari/claude-show-your-work/stargazers"><img src="https://img.shields.io/github/stars/iamumeransari/claude-show-your-work?style=flat&logo=github&color=EAB308" alt="GitHub stars"></a>
 </p>
 
-**show-your-work** is a plugin for Claude Code. When Claude finishes something, it shows it to you right in the chat: a screenshot of the page it built, a video of it clicking through your app, or the before and after of a fix, side by side. No browser, no localhost, no checking by hand.
+**show-your-work** is a plugin for Claude Code. When Claude finishes something, it shows it to you right in the chat: a screenshot of the page it built, a video of it clicking through your app, or a full QA run of a fix with the before and after side by side. No browser, no localhost, no manual QA.
 
 It works in Ghostty and kitty on macOS. It's free and open source.
 
@@ -26,7 +26,7 @@ It works in Ghostty and kitty on macOS. It's free and open source.
 
 ## Who it's for
 
-People who use Claude Code in a terminal like Ghostty. You don't have to pull up another window, open an app, spin up localhost or test anything by hand. Claude does the work and shows it to you, with a recording of it going through every change it made.
+People who use Claude Code in a terminal like Ghostty. You don't have to pull up another window, open an app, spin up localhost or do any manual QA. Claude does the work and shows it to you, with a recording of it going through every change it made.
 
 It really adds up when you run a few Claude sessions at once, or go back and forth with Claude on the same thing.
 
@@ -34,18 +34,21 @@ It really adds up when you run a few Claude sessions at once, or go back and for
 
 ### It tests your app and shows you the recording
 
-<p align="center"><img src="docs/product-features.gif" alt="A new-trip form gets built and tested: date range, email check, invites and create trip, with 8 of 8 checks passing in the sidebar" width="100%"></p>
+<p align="center"><img src="docs/product-features.gif" alt="A new-trip form gets built and QA'd: date range, email check, invites and create trip, with 8 of 8 checks passing in the sidebar" width="100%"></p>
 
-Claude builds the feature, then clicks through it like a real user would and records it. The video plays right in the chat, and you watch every check pass (or fail) as it happens.
+Claude builds the feature, then runs real QA on it: it clicks through your app like a user would (with Playwright), records it, and plays the recording right in the chat. Here's everything you get with it:
 
-Next to the video you get:
+- **Checks that tick as the video plays.** Each check shows up at the moment it's tested, with a tick or a cross.
+- **A QA summary.** The results in up to three lines, like "Form: 8/8 passed".
+- **What changed.** A list of every change Claude made. Click one and the video jumps to that moment. The one on screen lights up.
+- **Original, Updated and Compare.** Switch between the version before the fix, the version after, or both side by side.
+- **Both versions in sync.** Compare lines the two recordings up frame by frame. If the old version loads slower, the video waits for it, so every step happens at the same time on both sides.
+- **What's different right now.** A line under the video says what differs at that moment, for example `Annual toggle updates prices · Original ✗ → Updated ✓`.
+- **The same checks on both sides.** You see which checks failed before the fix and pass after it.
+- **History.** When Claude revises something more than once, every earlier version is kept, so you can go back and compare.
+- **Open page.** Jumps to the localhost or live page at the point you're watching.
 
-- **What changed.** Click any change and the video jumps to that moment.
-- **The test results.** Up to three lines, each with a tick or a cross.
-
-### Before and after, side by side
-
-When Claude fixes something, it can record the page before the fix and after it, then play both side by side. They stay in sync: if the old version loads slower, the video waits for it, so every step happens at the same time on both sides. A line under the video tells you what's different at that moment, for example: `Annual toggle updates prices · Original ✗ → Updated ✓`.
+It works for screenshots too: Claude can show you a before and after picture with the same view.
 
 ### It's not just for code
 
