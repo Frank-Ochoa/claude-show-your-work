@@ -16,7 +16,6 @@
 ```
 
 <p align="center">
-  <a href="docs/launch.mp4"><b>▶ Watch the launch film (1:14)</b></a><br>
   <a href="#what-it-does">What it does</a> ·
   <a href="#install">Install</a> ·
   <a href="#how-it-works">How it works</a> ·
