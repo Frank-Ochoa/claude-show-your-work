@@ -124,7 +124,7 @@ const opener = () => (isMac ? 'open' : 'xdg-open')
 export function pngDims(base64: string): { width: number; height: number } | null {
   const b = Uint8Array.from(atob(base64.slice(0, 44)), c => c.charCodeAt(0))
   if (b.length < 24 || b[0] !== 0x89 || b[1] !== 0x50 || b[2] !== 0x4e || b[3] !== 0x47) return null
-  const at = (i: number) => ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0
+  const at = (i: number) => (((b[i] ?? 0) << 24) | ((b[i + 1] ?? 0) << 16) | ((b[i + 2] ?? 0) << 8) | (b[i + 3] ?? 0)) >>> 0
 
   return { width: at(16), height: at(20) }
 }
