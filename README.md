@@ -30,6 +30,8 @@ People who use Claude Code in a terminal like Ghostty and are tired of switching
 
 **Designing something?** Ask Claude for 4 concepts and they show up right in the chat. Before, Claude would build them as an HTML file you had to open, look through, then switch back to the terminal to say which one you liked. Now you never leave the terminal.
 
+**Making videos?** This is where it shines most. Ask Claude for an ad, an animation or a cut of a film and it plays right in the chat, with how it's put together (hook, problem, product, call to action) listed next to it. Ask for changes and watch the new version straight away, with every earlier version kept so you can compare. No exporting, no opening a video player, no dragging files around.
+
 **Building a feature?** You don't have to spin up localhost or do any manual QA. Claude does the work, tests it, and shows you a recording of it going through every change it made.
 
 It really adds up when you run a few Claude sessions at once, or go back and forth with Claude on the same thing.
