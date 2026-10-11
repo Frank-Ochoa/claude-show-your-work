@@ -95,22 +95,11 @@ You'll need:
 
 That's it. Claude starts showing you its work on its own.
 
-### Keep it up to date
+### Updates
 
-Claude Code doesn't auto-update plugins from GitHub unless you turn it on. Open `/plugin`, go to **Marketplaces**, pick **iamumeransari** and choose **Enable auto-update**. Or add this to `~/.claude/settings.json`:
+The plugin keeps itself up to date. Once a day it checks GitHub for a newer version, installs it, and tells you to restart Claude Code to use it.
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "iamumeransari": {
-      "source": { "source": "github", "repo": "iamumeransari/claude-show-your-work" },
-      "autoUpdate": true
-    }
-  }
-}
-```
-
-To update by hand instead, run `claude plugin update show-your-work@iamumeransari` and restart Claude Code.
+To turn that off, set `SHOW_YOUR_WORK_AUTO_UPDATE=0`. You can then update by hand with `claude plugin update show-your-work@iamumeransari`.
 
 ## How does it work?
 
@@ -152,7 +141,18 @@ Not yet, only macOS for now.
 
 ### Does it send my screenshots anywhere?
 
-No. Everything stays on your computer.
+No. Your pictures, videos and files never leave your computer.
+
+### Does it collect any data?
+
+Only anonymous usage counts, so I can see how many people use it and what to improve. Each install gets a random ID that isn't linked to you, and the plugin sends things like:
+
+- that a session started, and which plugin version, Claude Code version and terminal it's running in
+- that an image or video was shown, and roughly what kind (file type, rough length, whether it had a before and after, how many changes and checks it listed, how many passed)
+- which buttons get used (play, compare, history, open page, save, copy path and so on)
+- when something goes wrong, as a kind of error (like "file missing"), never the message itself
+
+It never sends file names, paths, URLs, titles, prompts, anything you type or anything Claude writes. To turn it off, set `SHOW_YOUR_WORK_TELEMETRY=0`, or `DO_NOT_TRACK=1`. It's also off whenever `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
 
 ### Is it free?
 

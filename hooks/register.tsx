@@ -27,6 +27,17 @@ let ffmpeg = 'ffmpeg'
 let ffprobe = 'ffprobe'
 let generation = 0
 let pastedNames: string[] = []
+// Why a show failed, as a kind: the message itself can hold a path.
+export function reasonOf(err: unknown): string {
+  const m = String((err as Error)?.message ?? err)
+  if (/ENOENT|no such file|not found/i.test(m)) return 'missing_file'
+  if (/ffmpeg|ffprobe/i.test(m)) return 'video_tools'
+  if (/format|decode|convert|sips/i.test(m)) return 'unreadable'
+  if (/timed? ?out/i.test(m)) return 'timeout'
+  return 'other'
+}
+// A button press, by name only. False, so it chains: act('save') || keep().
+const act = (action: string): false => (track('action', { action }), false)
 
 // Playback per drawn site (a transcript row's tool_use_id, or the pane).
 type Player = {
@@ -728,6 +739,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
     const r = await $.ui.blit({ requestId: site, key, source: pic.src })
     if (r.deny && /alt/i.test(r.deny)) {
       canImage = false
+      track('cannot_draw')
       $.ui.toast("This background session can't draw pictures: see the warning in the chat.")
       redraw($)
     }
@@ -907,7 +919,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
 
   return (
     <Box flexDirection="row" flexWrap="nowrap" width={width}>
-      <Button key="play" variant="primary" label={word} onPress={() => toggle($, site, media, shown)} />
+      <Button key="play" variant="primary" label={word} onPress={() => { act(word.includes('Pause') ? 'pause' : 'play'); toggle($, site, media, shown) }} />
       <Text dimColor> {elapsed} </Text>
       {chunks.map((c, i) => (
         <Button
@@ -915,7 +927,7 @@ function Scrub(ui: Ui, $: EngineInterface, site: string, media: Shown, width: nu
           plain
           dimColor={c.isAhead}
           label={c.label}
-          onPress={() => seek($, site, media, (Math.round((c.start / Math.max(1, segments - 1)) * (frames.count - 1)) + 0.5) / frames.fps, shown)}
+          onPress={() => { act('scrub'); seek($, site, media, (Math.round((c.start / Math.max(1, segments - 1)) * (frames.count - 1)) + 0.5) / frames.fps, shown) }}
         />
       ))}
       <Text dimColor> {total}</Text>
@@ -1019,12 +1031,12 @@ function Tabs(ui: Ui, $: EngineInterface, site: string, shown: Shown) {
 
   return (
     <Box flexDirection="row" gap={1}>
-      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? 'Original')} onPress={() => restore(true)} />
-      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={tabLabel(shown.label ?? 'Updated')} onPress={() => restore(false)} />
-      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Compare" onPress={() => { restore(false); split($, site, shown, true) }} />}
+      <Button key="side-before" variant={isCompare ? 'primary' : 'secondary'} label={tabLabel(shown.compare.label ?? 'Original')} onPress={() => { act('original'); restore(true) }} />
+      <Button key="side-after" variant={isUpdated ? 'primary' : 'secondary'} label={tabLabel(shown.label ?? 'Updated')} onPress={() => { act('updated'); restore(false) }} />
+      {canBoth && <Button key="side-both" variant={isBoth ? 'primary' : 'secondary'} label="⧉ Compare" onPress={() => { act('compare'); restore(false); split($, site, shown, true) }} />}
       {hasSteps && (
         <Button key="history" variant={isHistory ? 'primary' : 'secondary'} label={`History · ${shown.history!.length + 1}`}
-          onPress={() => { if (isHistory) return restore(false); one.isHistory = true; one.changesPage = 0; redraw($, site) }} />
+          onPress={() => { if (isHistory) return restore(false); act('history'); one.isHistory = true; one.changesPage = 0; redraw($, site) }} />
       )}
     </Box>
   )
@@ -1041,7 +1053,7 @@ function Changes(ui: Ui, $: EngineInterface, site: string, shown: Shown, fixed: 
       key={`${word}-${c.name}`}
       plain
       label={`${c.at !== undefined ? clock(c.at) + ' ' : ''}${word} · ${c.name}`}
-      onPress={() => c.at !== undefined && seek($, site, media, c.at, shown)}
+      onPress={() => { if (c.at === undefined) return; act('check_jump'); seek($, site, media, c.at, shown) }}
     />
   )
 
@@ -1181,7 +1193,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
       )}
       {(pages[page] ?? []).map(({ c, n, lines }, k) => {
         const isLive = n === live
-        const jump = () => c.at !== undefined && seek($, site, media, onOriginal ? toOriginal(shown, c.at) : c.at, shown)
+        const jump = () => { if (c.at === undefined) return; act('change_jump'); seek($, site, media, onOriginal ? toOriginal(shown, c.at) : c.at, shown) }
         return (
           <Box key={`change-${n}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
             <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
@@ -1227,7 +1239,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
             <Text color={isOn ? 'suggestion' : undefined} dimColor={!isOn}>{`${i + 1}.`.padStart(3)}</Text>
             <Box flexDirection="column" width={TITLE}>
               {lines.map((line, j) => (
-                <Button key={`version-${i}-${j}`} plain label={line} hover={{ inverse: true }} onPress={() => pickVersion($, site, shown, i)} />
+                <Button key={`version-${i}-${j}`} plain label={line} hover={{ inverse: true }} onPress={() => { act('version_pick'); pickVersion($, site, shown, i) }} />
               ))}
             </Box>
             {(isOn || isLatest) && (
@@ -1304,9 +1316,9 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
   return (
     <Box flexDirection="row" gap={2}>
       {!source.startsWith(`${home}/Downloads/`) ? (
-        <Button key="keep" plain dimColor label="Save to Downloads" onPress={() => void keep()} />
+        <Button key="keep" plain dimColor label="Save to Downloads" onPress={() => { act('save'); void keep() }} />
       ) : (
-        <Button key="reveal" plain dimColor label="Show in Finder" onPress={() => void $.process.run(['open', '-R', source]).then(r => done(r, 'Shown in Finder'))} />
+        <Button key="reveal" plain dimColor label="Show in Finder" onPress={() => act('reveal') || void $.process.run(['open', '-R', source]).then(r => done(r, 'Shown in Finder'))} />
       )}
       {!isNarrow && (
         <Button
@@ -1315,7 +1327,7 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
           dimColor
           label="Copy path"
           onPress={(press: { surface: 'terminal' }) =>
-            void $.ui.copy({ text: source, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Path copied' : 'Could not copy the path'))
+            act('copy_path') || void $.ui.copy({ text: source, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Path copied' : 'Could not copy the path'))
           }
         />
       )}
@@ -1356,7 +1368,7 @@ function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: 
           variant="primary"
           label="Copy command"
           onPress={(press: { surface: 'terminal' }) =>
-            void $.ui.copy({ text: command, surface: press.surface }).then(r =>
+            act('copy_resume_command') || void $.ui.copy({ text: command, surface: press.surface }).then(r =>
               $.ui.toast(r.isCopied ? 'Copied. Paste it in a new Ghostty tab.' : 'Could not copy'),
             )
           }
@@ -1387,7 +1399,7 @@ function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
           variant="primary"
           label="Copy prompt"
           onPress={(press: { surface: 'terminal' }) =>
-            void $.ui.copy({ text: prompt, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Copied. Paste it to Claude.' : 'Could not copy'))
+            act('copy_expired_prompt') || void $.ui.copy({ text: prompt, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Copied. Paste it to Claude.' : 'Could not copy'))
           }
         />
       </Box>
@@ -1463,7 +1475,7 @@ async function Viewer(
       plain
       label={page ? '↗ Open page' : '↗ View'}
       onPress={() =>
-        void $.process.run(['open', page ?? source]).then(r =>
+        act(page ? 'open_page' : 'open_file') || void $.process.run(['open', page ?? source]).then(r =>
           $.ui.toast(r.exitCode === 0 ? `Opened ${(page ?? source.split('/').pop()!).slice(0, 60)}` : 'Could not open it'),
         )
       }
@@ -1479,8 +1491,8 @@ async function Viewer(
       {frames && Scrub(ui, $, site, media, rowWidth, shown)}
       <Box flexDirection="row" justifyContent="space-between" columnGap={2} flexWrap="wrap" width={rowWidth}>
         <Box flexDirection="row" columnGap={2}>
-          {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => seek($, site, media, one.frame / frames.fps - 5, shown)} />}
-          {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => seek($, site, media, one.frame / frames.fps + 5, shown)} />}
+          {frames && <Button key="back" plain dimColor label="« 5s" onPress={() => act('skip_back') || seek($, site, media, one.frame / frames.fps - 5, shown)} />}
+          {frames && <Button key="forward" plain dimColor label="5s »" onPress={() => act('skip_forward') || seek($, site, media, one.frame / frames.fps + 5, shown)} />}
           {!isWide && !hasReport && Tabs(ui, $, site, shown)}
         </Box>
         <Box flexDirection="row" columnGap={2}>
@@ -1663,6 +1675,137 @@ const TOOL_INPUT = {
   required: ['path'],
 }
 
+// ── Usage stats ──────────────────────────────────────────────────────────
+
+// Anonymous usage stats, sent to PostHog: what kind of thing happened and how
+// often, under a random id made once per install. Never a file name, path,
+// URL, title, prompt or anything typed. Off with SHOW_YOUR_WORK_TELEMETRY=0 or
+// DO_NOT_TRACK=1, and nothing is sent while POSTHOG_KEY is empty.
+const POSTHOG_HOST = 'https://us.i.posthog.com'
+// The project API key: it can only add events, never read them, so it ships.
+const POSTHOG_KEY = ''
+// Events wait here and go out together, at most once a minute and at exit.
+const FLUSH_MS = 60_000
+const MAX_QUEUED = 500
+
+type Props = Record<string, string | number | boolean | undefined>
+type Event = { event: string; properties: Props; timestamp: string }
+
+let isOn = false
+let installId = ''
+let base: Props = {}
+let queue: Event[] = []
+let isFlushing = false
+
+async function startTelemetry($: EngineInterface, context: Props) {
+  if (!POSTHOG_KEY) return
+  const optOut = await $.env.get('SHOW_YOUR_WORK_TELEMETRY')
+  const dnt = await $.env.get('DO_NOT_TRACK')
+  const quiet = await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
+  if (/^(0|false|off|no)$/i.test(optOut ?? '') || /^(1|true)$/i.test(dnt ?? '') || quiet) return
+  installId = String((await $.store.get('installId')) ?? '')
+  const isNew = !installId
+  if (isNew) {
+    installId = crypto.randomUUID()
+    await $.store.set('installId', installId)
+  }
+  isOn = true
+  base = { ...context, $process_person_profile: false }
+  if (isNew) track('installed')
+  track('session_started')
+  $.clock.every(FLUSH_MS, () => void flush($))
+}
+
+// Counts and kinds only: callers pass no names, paths or text.
+function track(event: string, properties: Props = {}) {
+  if (!isOn) return
+  if (queue.length >= MAX_QUEUED) queue.shift()
+  queue.push({ event, properties: { ...base, ...properties }, timestamp: new Date().toISOString() })
+}
+
+async function flush($: EngineInterface) {
+  if (!isOn || isFlushing || !queue.length) return
+  isFlushing = true
+  const batch = queue
+  queue = []
+  try {
+    const r = await $.http.fetch(`${POSTHOG_HOST}/batch/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ api_key: POSTHOG_KEY, batch: batch.map(e => ({ ...e, distinct_id: installId })) }),
+    })
+    // A refused batch is dropped, not retried: stats are never worth a backlog.
+    if (!r.ok && r.status >= 500) queue = [...batch, ...queue].slice(-MAX_QUEUED)
+  } catch {
+    queue = [...batch, ...queue].slice(-MAX_QUEUED)
+  } finally {
+    isFlushing = false
+  }
+}
+
+// Rough sizes instead of exact ones, so nothing singles a file out.
+export function bucket(n: number, edges: number[]): string {
+  const i = edges.findIndex(e => n < e)
+
+  return i === -1 ? `${edges.at(-1)}+` : i === 0 ? `<${edges[0]}` : `${edges[i - 1]}-${edges[i]}`
+}
+
+// ── Updates ──────────────────────────────────────────────────────────────
+
+// Keeps the plugin current without the user turning on marketplace
+// auto-update: once a day it asks GitHub for the latest version and, when it
+// is newer, updates through Claude Code's own plugin commands. The new
+// version runs from the next session. Off with SHOW_YOUR_WORK_AUTO_UPDATE=0.
+const REPO = 'iamumeransari/claude-show-your-work'
+const MARKETPLACE = 'iamumeransari'
+const PLUGIN = 'show-your-work'
+const LATEST = `https://raw.githubusercontent.com/${REPO}/main/.claude-plugin/plugin.json`
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// 1.10.0 is newer than 1.9.3; anything after a dash is ignored.
+export function isNewer(latest: string, current: string): boolean {
+  const parts = (v: string) => (v.split('-')[0] ?? '').split('.').map(n => Number(n) || 0)
+  const a = parts(latest), b = parts(current)
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0)
+  }
+
+  return false
+}
+
+async function claude($: EngineInterface, args: string) {
+  return $.process.run(['sh', '-lc', `claude ${args}`], { timeoutMs: 120_000 })
+}
+
+async function checkForUpdate($: EngineInterface, current: string) {
+  const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
+  if (/^(0|false|off|no)$/i.test(off ?? '')) return
+  const now = await $.clock.now()
+  if (now - Number((await $.store.get('updateCheckedAt')) ?? 0) < DAY_MS) return
+  await $.store.set('updateCheckedAt', now)
+
+  const r = await $.http.fetch(LATEST)
+  if (!r.ok) return
+  const latest = String((JSON.parse(r.text) as { version?: string }).version ?? '')
+  if (!latest || !isNewer(latest, current)) return
+
+  // A marketplace read from a folder is someone working on the plugin: leave it.
+  const markets = JSON.parse((await claude($, 'plugin marketplace list --json')).stdout || '[]') as { name: string; source: string }[]
+  const market = markets.find(m => m.name === MARKETPLACE)
+  if (!market || market.source === 'directory') return
+  const plugins = JSON.parse((await claude($, 'plugin list --json')).stdout || '[]') as { id: string; scope?: string }[]
+  const scope = plugins.find(p => p.id === `${PLUGIN}@${MARKETPLACE}`)?.scope ?? 'user'
+
+  await claude($, `plugin marketplace update ${MARKETPLACE}`)
+  const done = await claude($, `plugin update ${PLUGIN}@${MARKETPLACE} --scope ${scope}`)
+  if (done.exitCode !== 0) {
+    track('update_failed', { from: current, to: latest })
+    return
+  }
+  track('update_installed', { from: current, to: latest })
+  $.ui.toast(`show-your-work updated to ${latest}. Restart Claude Code to use it.`)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -1674,6 +1817,20 @@ export const register: Register = on => {
     home = got('home')
     ffmpeg = ff || '/opt/homebrew/bin/ffmpeg'
     ffprobe = fp || '/opt/homebrew/bin/ffprobe'
+    void (async () => {
+      const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }
+      const pluginVersion = manifest.version ?? '0.0.0'
+      const program = (await $.env.get('TERM_PROGRAM')) ?? ''
+      const term = (await $.env.get('TERM')) ?? ''
+      const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
+      await startTelemetry($, {
+        plugin_version: pluginVersion,
+        claude_code_version: (await $.session.version().catch(() => ({ base: '' }))).base ?? '',
+        terminal,
+        has_ffmpeg: !!ff,
+      })
+      await checkForUpdate($, pluginVersion)
+    })().catch(() => undefined)
     // Frames and converted pictures a week old go; a window that scrolls back
     // into view cuts its frames again from the source.
     void $.process.run(['sh', '-c', `find ${TMP} -mindepth 1 -maxdepth 1 ! -name kept -mtime +7 -exec rm -rf {} + 2>/dev/null; find ${TMP}/kept -type f -mtime +7 -delete 2>/dev/null; true`]).then(() => trimFrames($))
@@ -1713,6 +1870,12 @@ export const register: Register = on => {
     return started
   })
 
+  on('session.end', async ($, e, next) => {
+    await flush($).catch(() => undefined)
+
+    return next(e)
+  })
+
   on('prompt.submit', ($, e, next) => {
     pastedNames = (e.attachments ?? []).filter(a => a.type === 'image' && a.filename).map(a => a.filename!)
 
@@ -1739,8 +1902,10 @@ export const register: Register = on => {
       await update($, current, () => shown)
       await $.ui.open({ id: PANE, title: shown.title })
 
+      track('img_command', { kind: shown.frames ? 'video' : 'image' })
       return { text: `Showing ${shown.title} (${shown.width}×${shown.height}).` }
     } catch (err) {
+      track('show_failed', { from: 'img_command', reason: reasonOf(err) })
       return { text: `Could not show it: ${(err as Error).message.replace(/^.*?failed: ENOENT$/, 'no such file')}` }
     }
   })
@@ -1798,6 +1963,23 @@ export const register: Register = on => {
       if (!shown.frames && kept.copy !== kept.real)
         remember(kept.copy, { kind: shown.kind, path: shown.path, source: shown.source, width: shown.width, height: shown.height, title: 'Original', generation: shown.generation })
       const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.width}×${shown.height}`
+      const checks = [...(shown.checks ?? []), ...(shown.compare?.checks ?? [])]
+      track(shown.frames ? 'video_shown' : 'image_shown', {
+        format: (input.path.match(/\.([a-z0-9]+)$/i)?.[1] ?? 'none').toLowerCase().slice(0, 5),
+        ...(shown.frames ? { duration: bucket(shown.frames.duration, [5, 15, 30, 60, 120]), frames: bucket(shown.frames.count, [60, 180, 450, 900]) } : {}),
+        has_compare: !!shown.compare,
+        is_side_by_side: !!shown.pair,
+        is_revision: !!input.previous,
+        versions: shown.history?.length ?? 0,
+        changes: shown.changes?.length ?? 0,
+        has_custom_changes_title: !!input.changes_title,
+        summary_lines: shown.summary?.length ?? 0,
+        summary_ok: shown.summary ? shown.summary.every(l => l.ok) : undefined,
+        checks: checks.length,
+        checks_failed: checks.filter(c => !c.ok).length,
+        has_url: !!input.url,
+        has_pr: !!input.pr,
+      })
 
       const handle = kept.id
         ? ` Shown as #${kept.id}${kept.chain.length ? `, version ${kept.chain.length + 1} after #${kept.chain.at(-1)!.id}` : ''}. To show a revised version of this, pass previous: "${kept.id}".`
@@ -1805,6 +1987,7 @@ export const register: Register = on => {
       const hint = (kept.missing ? ` #${kept.missing} wasn't found in this project, so this has no history.` : '') + handle
       return { result: `Shown to the user: ${shown.title} (${what}).${hint}\n${MARK}${JSON.stringify(shown)}` }
     } catch (err) {
+      track('show_failed', { from: String((e as { tool?: string }).tool ?? '').endsWith('video') ? 'show_video' : 'show_image', reason: reasonOf(err) })
       return { deny: `show-your-work: ${(err as Error).message}` }
     }
   }).catch(() => ({ deny: 'show-your-work: it could not be shown.' }))
