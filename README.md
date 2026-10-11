@@ -46,7 +46,10 @@ It really adds up when you run a few Claude sessions at once, or go back and for
 
 ### It tests your app and shows you the recording
 
-<p align="center"><img src="docs/qa.jpg" alt="A new-trip form gets built and QA'd: date range, email check, invites and create trip, with 8 of 8 checks passing in the sidebar" width="100%"></p>
+<p align="center">
+  <img src="docs/qa-product.jpg" alt="A recording of the new-trip form plays in the chat, with what changed and the QA checks beside it" width="100%">
+  <img src="docs/qa-checks.jpg" alt="Close-up of the sidebar: all four changes listed and all 8 checks passed" width="100%">
+</p>
 
 Claude builds the feature, then runs real QA on it: it clicks through your app like a user would (with Playwright), records it, and plays the recording right in the chat. Here's everything you get with it:
 
