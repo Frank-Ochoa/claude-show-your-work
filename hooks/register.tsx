@@ -27,15 +27,6 @@ let ffmpeg = 'ffmpeg'
 let ffprobe = 'ffprobe'
 let generation = 0
 let pastedNames: string[] = []
-// Why a show failed, as a kind: the message itself can hold a path.
-export function reasonOf(err: unknown): string {
-  const m = String((err as Error)?.message ?? err)
-  if (/ffmpeg|ffprobe/i.test(m)) return 'video_tools'
-  if (/ENOENT|no such file|not found/i.test(m)) return 'missing_file'
-  if (/format|decode|convert|sips/i.test(m)) return 'unreadable'
-  if (/timed? ?out/i.test(m)) return 'timeout'
-  return 'other'
-}
 // A button press, by name only. False, so it chains: act('save') || keep().
 const act = (action: string): false => (track('action', { action }), false)
 
@@ -66,6 +57,8 @@ type Player = {
 const players = new Map<string, Player>()
 // Calls made since this load: only these autoplay, not every window a reload redraws.
 const freshCalls = new Set<string>()
+// Each failed show's notice, by tool call, for the box drawn in its place.
+const notices = new Map<string, Notice>()
 // Every change that should repaint bumps this; a window's drawing is kept and
 // handed back while nothing changed (scrolling only moves which rows show).
 let version = 0
@@ -195,6 +188,63 @@ let hasVideoTools = false
 export const NO_FFMPEG =
   "videos need ffmpeg, and it isn't installed. Pictures still work. Install it with `brew install ffmpeg` " +
   '(Claude can run that for you), then restart Claude Code. No Homebrew? Install it first from https://brew.sh.'
+
+// What the person pastes back so Claude installs ffmpeg and tries again.
+export const FFMPEG_PROMPT =
+  'Install ffmpeg for me with `brew install ffmpeg`. If Homebrew isn\'t installed, tell me how to install it first. Then show the video again.'
+
+// A failure as the person and Claude see it: a box in place of the picture,
+// one plain message for Claude, and a prompt to paste back. Never raw tool
+// output, never the plugin's internal copy of a file.
+export type NoticeKind = 'missing' | 'not_image' | 'broken_video' | 'no_picture' | 'no_ffmpeg' | 'other'
+export type Notice = { kind: NoticeKind; title: string; text: string; message: string; prompt: string }
+
+// How a failure reads, from whatever the tools said; `path` is the person's own.
+export function noticeOf(err: unknown, path: string, homeDir = ''): Notice {
+  const raw = String((err as Error)?.message ?? err)
+  const shown = homeDir && path.startsWith(homeDir + '/') ? '~' + path.slice(homeDir.length) : path
+  const name = path.split('/').pop() || path
+  if (raw.includes(NO_FFMPEG)) return {
+    kind: 'no_ffmpeg', title: 'Videos need ffmpeg', message: NO_FFMPEG, prompt: FFMPEG_PROMPT,
+    text: "ffmpeg isn't installed, so this video can't play here. Pictures still work. Copy the prompt and paste it to Claude to install it, or run `brew install ffmpeg` yourself. No Homebrew? Get it from brew.sh first.",
+  }
+  if (/does not contain any stream|matches no streams|no frames in|Output file is empty/i.test(raw)) return {
+    kind: 'no_picture', title: 'This video has no picture',
+    text: `${name} has sound but no picture, so there's nothing to play.`,
+    message: `${shown} has no video track (sound only), so there's nothing to play. Don't retry it; show a file with a picture instead.`,
+    prompt: `${shown} has no picture, only sound. Find the right video and show it to me again.`,
+  }
+  if (/ffmpeg could not read|Invalid data|moov atom|could not find codec|Error opening input/i.test(raw)) return {
+    kind: 'broken_video', title: "This video can't be read",
+    text: `${name} couldn't be opened as a video. It may be cut off, still being written, or not really a video.`,
+    message: `${shown} couldn't be read as a video: it's damaged, unfinished (still recording or cut off), or not a video. Re-export or re-record it, then show it again.`,
+    prompt: `${shown} couldn't be read as a video. Check it, re-export or re-record it if it's broken, then show it to me again.`,
+  }
+  if (/could not convert|not an image|Cannot extract image|sips/i.test(raw)) return {
+    kind: 'not_image', title: "This isn't a picture",
+    text: `${name} isn't a picture, so it can't be shown. Pictures can be PNG, JPEG, WebP, GIF or TIFF.`,
+    message: `${shown} isn't a picture (show_image opens PNG, JPEG, WebP, GIF and TIFF). Show an image file, or use show_video for a video.`,
+    prompt: `${shown} isn't a picture. Show me the right file instead.`,
+  }
+  if (/ENOENT|no such file|not found/i.test(raw)) return {
+    kind: 'missing', title: 'File not found',
+    text: `There's no file at ${shown}.`,
+    message: `There's no file at ${shown}. Check the path (it may have moved or not been saved yet), then show it again.`,
+    prompt: `There's no file at ${shown}. Find the right file and show it to me again.`,
+  }
+  const detail = raw.split('\n')[0].replace(/\/(?:private\/)?tmp\/\S+|\S*\/\.show-your-work\/\S+/g, name).slice(0, 160)
+  return {
+    kind: 'other', title: "Couldn't show it",
+    text: `${name} couldn't be shown: ${detail}`,
+    message: `${shown} couldn't be shown: ${detail}`,
+    prompt: `${shown} couldn't be shown (${detail}). Look into it and show it to me again.`,
+  }
+}
+
+// The usage-stats reason for a failure, as a kind.
+const REASONS: Record<NoticeKind, string> = {
+  missing: 'missing_file', no_ffmpeg: 'video_tools', not_image: 'unreadable', broken_video: 'unreadable', no_picture: 'unreadable', other: 'other',
+}
 
 // Cuts a clip into PNG frames the terminal can swap through.
 // A file as it is now: its path, size and modified time. The same unchanged
@@ -652,13 +702,16 @@ async function storeVersion($: EngineInterface, raw: string, note: string, title
 
 // The tool's text result carries the shown item as `show-your-work:{json}`;
 // the output may be that string or a list of text blocks.
+// A tool result's text, whether it came as a string or as content blocks.
+export function textOf(output: unknown): string {
+  return typeof output === 'string'
+    ? output
+    : Array.isArray(output)
+      ? output.map(b => (b && typeof b === 'object' && 'text' in b ? String(b.text) : '')).join('\n')
+      : ''
+}
 export function parseShown(output: unknown): Shown | null {
-  const text =
-    typeof output === 'string'
-      ? output
-      : Array.isArray(output)
-        ? output.map(b => (b && typeof b === 'object' && 'text' in b ? String(b.text) : '')).join('\n')
-        : ''
+  const text = textOf(output)
   const line = text.split('\n').find(l => l.startsWith(MARK))
   if (!line) return null
   try {
@@ -771,8 +824,9 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
     const r = await $.ui.blit({ requestId: site, key, source: pic.src })
     if (r.deny && /alt/i.test(r.deny)) {
       canImage = false
-      track('cannot_draw')
-      $.ui.toast("This background session can't draw pictures: see the warning in the chat.")
+      drawCause = causeOf(inTmux, terminalName)
+      track('cannot_draw', { cause: drawCause })
+      $.ui.toast("Pictures can't show here: see the notice in the chat.")
       redraw($)
     }
   }, () => undefined)
@@ -1380,35 +1434,41 @@ export function urlAt(shown: Shown, seconds: number): string | undefined {
 export const resumeCommand = (id: string) =>
   `CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume${id ? ' ' + id : ''}`
 
-// The whole window, while pictures can't draw here: a warning with the way
-// back to full quality, and the blocky preview only if asked for.
-function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: number) {
-  const { Box, Text, Button } = ui
-  const command = resumeCommand(sessionId)
+// Why pictures can't draw here, once a draw has failed: tmux blocking them,
+// a terminal without picture support, or a background session.
+export type DrawCause = 'tmux' | 'terminal' | 'background'
+let drawCause: DrawCause = 'background'
+let inTmux = false
+let terminalName = ''
+export const causeOf = (tmux: boolean, terminal: string): DrawCause =>
+  tmux ? 'tmux' : /^(ghostty|kitty)$/.test(terminal) ? 'background' : 'terminal'
 
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
-      <Text bold color="warning">⚠ Can't show {shown.frames ? 'videos' : 'pictures'} in a background session</Text>
-      <Text wrap="wrap">
-        {'\n'}"{shown.title}" is ready, but this chat is running as a background session, and those can't draw pictures in the terminal. Resume this chat in a normal Ghostty tab to see it at full quality:
-      </Text>
-      <Box flexDirection="row" gap={2} marginTop={1}>
-        <Text bold>{command}</Text>
-      </Box>
-      <Box flexDirection="row" gap={2} marginTop={1}>
-        <Button
-          key="copy-resume"
-          variant="primary"
-          label="Copy command"
-          onPress={(press: { surface: 'terminal' }) =>
-            act('copy_resume_command') || void $.ui.copy({ text: command, surface: press.surface }).then(r =>
-              $.ui.toast(r.isCopied ? 'Copied. Paste it in a new Ghostty tab.' : 'Could not copy'),
-            )
-          }
-        />
-      </Box>
-    </Box>
-  )
+// The notice for a picture that couldn't draw, and the line Claude reads.
+export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'video', id: string) {
+  const what = kind === 'video' ? 'videos' : 'pictures'
+  if (cause === 'tmux') return {
+    title: `tmux is blocking ${what}`,
+    text: `"${name}" is ready, but tmux stops ${what} from reaching the terminal. Add this line to ~/.tmux.conf, reload tmux, and ask Claude to show it again. Or open this chat outside tmux.`,
+    command: 'set -g allow-passthrough on', label: 'Copy setting', action: 'copy_tmux_setting',
+    claude: `tmux is blocking pictures, so the person saw a notice instead of ${name}. They can add "set -g allow-passthrough on" to ~/.tmux.conf or open the chat outside tmux.`,
+  }
+  if (cause === 'terminal') return {
+    title: `This terminal can't show ${what}`,
+    text: `"${name}" is ready, but this terminal can't draw ${what}. Open this chat in Ghostty or kitty to see it:`,
+    command: `claude --resume${id ? ' ' + id : ''}`, label: 'Copy command', action: 'copy_resume_command',
+    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need Ghostty or kitty to see it.`,
+  }
+  return {
+    title: `Can't show ${what} in a background session`,
+    text: `"${name}" is ready, but this chat is running as a background session, and those can't draw ${what} in the terminal. Resume it in a normal Ghostty tab to see it:`,
+    command: resumeCommand(id), label: 'Copy command', action: 'copy_resume_command',
+    claude: `this chat runs as a background session, which can't draw pictures, so the person saw a notice instead of ${name}. They can resume the chat in a normal terminal tab to see it.`,
+  }
+}
+
+function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: number) {
+  const n = cantDraw(drawCause, shown.title, shown.frames ? 'video' : 'picture', sessionId)
+  return NoticeBox(ui, $, width, { ...n, copy: n.command })
 }
 
 // The file behind a preview is gone (temp cleared, cache trimmed, or the
@@ -1420,19 +1480,29 @@ export function expiredPrompt(shown: Shown): string {
     (shown.compare ? ', with the same compare' : '') + (shown.changes?.length ? ' and the same list of changes' : '') + '.'
 }
 function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
+  return NoticeBox(ui, $, width, {
+    title: 'This preview has expired',
+    text: `"${shown.title}" was cleared from the preview cache, and its file is no longer there. Copy the prompt and paste it to Claude to send it again.`,
+    copy: expiredPrompt(shown), label: 'Copy prompt', action: 'copy_expired_prompt',
+  })
+}
+
+// A failure, drawn in place of the picture: what happened, in plain words,
+// and one button that copies what to paste back (a prompt, or a command).
+function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string }) {
   const { Box, Text, Button } = ui
-  const prompt = expiredPrompt(shown)
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
-      <Text bold color="warning">⚠ This preview has expired</Text>
-      <Text wrap="wrap">{'\n'}"{shown.title}" was cleared from the preview cache, and its file is no longer there. Ask Claude to send it again.</Text>
+      <Text bold color="warning">⚠ {n.title}</Text>
+      <Text wrap="wrap">{'\n'}{n.text}</Text>
+      {n.command ? <Box marginTop={1}><Text bold>{n.command}</Text></Box> : null}
       <Box flexDirection="row" gap={2} marginTop={1}>
         <Button
-          key="copy-expired"
+          key={n.action}
           variant="primary"
-          label="Copy prompt"
+          label={n.label}
           onPress={(press: { surface: 'terminal' }) =>
-            act('copy_expired_prompt') || void $.ui.copy({ text: prompt, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? 'Copied. Paste it to Claude.' : 'Could not copy'))
+            act(n.action) || void $.ui.copy({ text: n.copy, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? (n.command ? 'Copied. Paste it in your terminal.' : 'Copied. Paste it to Claude.') : 'Could not copy'))
           }
         />
       </Box>
@@ -1877,6 +1947,17 @@ export const register: Register = on => {
       const program = (await $.env.get('TERM_PROGRAM')) ?? ''
       const term = (await $.env.get('TERM')) ?? ''
       const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
+      terminalName = terminal
+      inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
+      // tmux with passthrough off never lets a picture through: known before the first one.
+      if (inTmux) {
+        const pass = await $.process.run(['tmux', 'show', '-gv', 'allow-passthrough']).catch(() => null)
+        if (pass && pass.exitCode === 0 && /^off$/i.test(pass.stdout.trim())) {
+          canImage = false
+          probed = true
+          drawCause = 'tmux'
+        }
+      }
       await startTelemetry($, {
         plugin_version: pluginVersion,
         claude_code_version: (await $.session.version().catch(() => ({ base: '' }))).base ?? '',
@@ -1924,6 +2005,20 @@ export const register: Register = on => {
     return started
   })
 
+  // Once a draw has failed, every later turn knows: what was "shown" before
+  // was a notice, not the picture.
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (canImage) return composed
+    const why = cantDraw(drawCause, 'it', 'picture', sessionId).claude.replace(/, so the person saw a notice instead of it\./, '.')
+    return {
+      sections: [...composed.sections, {
+        id: 'show-your-work:cannot-draw', scope: 'session',
+        text: `show-your-work: pictures and videos can't draw in this session (${why}) Anything shown with show_image or show_video was not seen: the person saw a notice instead. Don't say they saw it.`,
+      }],
+    }
+  })
+
   on('session.end', async ($, e, next) => {
     await flush($).catch(() => undefined)
 
@@ -1959,8 +2054,9 @@ export const register: Register = on => {
       track('img_command', { kind: shown.frames ? 'video' : 'image' })
       return { text: `Showing ${shown.title} (${shown.width}×${shown.height}).` }
     } catch (err) {
-      track('show_failed', { from: 'img_command', reason: reasonOf(err) })
-      return { text: `Could not show it: ${(err as Error).message.replace(/^.*?failed: ENOENT$/, 'no such file')}` }
+      const n = noticeOf(err, expand(arg, cwd, home), home)
+      track('show_failed', { from: 'img_command', reason: REASONS[n.kind] })
+      return { text: n.message }
     }
   })
 
@@ -2041,10 +2137,15 @@ export const register: Register = on => {
         ? ` Shown as #${kept.id}${kept.chain.length ? `, version ${kept.chain.length + 1} after #${kept.chain.at(-1)!.id}` : ''}. To show a revised version of this, pass previous: "${kept.id}".`
         : ''
       const hint = (kept.missing ? ` #${kept.missing} wasn't found in this project, so this has no history.` : '') + handle
-      return { result: `Shown to the user: ${shown.title} (${what}).${hint}\n${MARK}${JSON.stringify(shown)}` }
+      const opening = canImage
+        ? `Shown to the user: ${shown.title} (${what}).`
+        : `Not shown: ${cantDraw(drawCause, shown.title, shown.frames ? 'video' : 'picture', sessionId).claude} Don't say it was shown.`
+      return { result: `${opening}${hint}\n${MARK}${JSON.stringify(shown)}` }
     } catch (err) {
-      track('show_failed', { from: String((e as { tool?: string }).tool ?? '').endsWith('video') ? 'show_video' : 'show_image', reason: reasonOf(err) })
-      return { deny: `show-your-work: ${(err as Error).message}` }
+      const n = noticeOf(err, expand(input.path ?? '', cwd, home), home)
+      notices.set(e.tool_use_id, n)
+      track('show_failed', { from: String((e as { tool?: string }).tool ?? '').endsWith('video') ? 'show_video' : 'show_image', reason: REASONS[n.kind] })
+      return { deny: `show-your-work: ${n.message}` }
     }
   }).catch(() => ({ deny: 'show-your-work: it could not be shown.' }))
 
@@ -2060,7 +2161,13 @@ export const register: Register = on => {
   // Inline in the transcript: the player is the tool's result row.
   on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
     const props = e.props as { tool: string; output: unknown; isErrored: boolean; onScreen?: unknown }
-    if (!TOOLS.includes(props.tool) || props.isErrored) return next(e)
+    if (!TOOLS.includes(props.tool)) return next(e)
+    if (props.isErrored) {
+      const n = notices.get((props as { tool_use_id?: string }).tool_use_id ?? '') ??
+        (textOf(props.output).includes(NO_FFMPEG) ? noticeOf(new Error(NO_FFMPEG), '') : undefined)
+      if (!n) return next(e)
+      return NoticeBox($.ui.resolve(e) as Ui, $, (e.viewport?.columns ?? 100) - 8, { ...n, copy: n.prompt, label: 'Copy prompt', action: `copy_${n.kind}_prompt` })
+    }
     // Scrolled out of view: stop playing, and don't start there.
     const one = player(e.requestId)
     if (props.onScreen === null) {

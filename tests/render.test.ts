@@ -117,3 +117,27 @@ test('a preview whose files are gone says it expired, with a prompt to copy', as
   const tree = JSON.stringify(await (await $.ui.mount(target)).drawn())
   expect(tree.includes('"Image"') || tree.includes('expired')).toBe(true)
 })
+
+test('a video without ffmpeg says so in place, with a prompt to copy', async $ => {
+  const output = "show-your-work: videos need ffmpeg, and it isn't installed. Pictures still work. Install it with `brew install ffmpeg` " +
+    '(Claude can run that for you), then restart Claude Code. No Homebrew? Install it first from https://brew.sh.'
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'no-ff',
+    props: { tool_use_id: 'no-ff', tool: 'mcp__show-your-work__show_video', output, isErrored: true },
+    viewport: { columns: 120, rows: 50 },
+  } as any
+  const tree = JSON.stringify(await (await $.ui.mount(target)).drawn())
+  expect(tree.includes('Videos need ffmpeg')).toBe(true)
+  expect(tree.includes('Copy prompt')).toBe(true)
+})
+
+test('other errors keep the engine\'s own drawing', async $ => {
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'other-err',
+    props: { tool_use_id: 'other-err', tool: 'mcp__show-your-work__show_video', output: 'show-your-work: no such file', isErrored: true },
+    viewport: { columns: 120, rows: 50 },
+  } as any
+  // The harness has no engine drawing, so passing it on shows up as a refusal.
+  const drawn = await $.ui.mount(target).then(m => m.drawn()).then(t => JSON.stringify(t), (err: Error) => String(err))
+  expect(drawn.includes('Videos need ffmpeg')).toBe(false)
+})
