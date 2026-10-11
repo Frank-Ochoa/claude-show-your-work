@@ -16,40 +16,15 @@
 ```
 
 <p align="center">
+  <a href="docs/launch.mp4"><b>▶ Watch the launch film (1:14)</b></a><br>
+  <a href="#what-it-does">What it does</a> ·
   <a href="#install">Install</a> ·
-  <a href="#what-you-see">What you see</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#faq">FAQ</a> ·
   <a href="#try-the-demo">Try the demo</a>
 </p>
 
 ---
-
-## See it work
-
-<p align="center"><a href="docs/launch.mp4"><b>▶ Watch the full launch film (1:14)</b></a></p>
-
-### Website design
-
-Concepts, the built page recorded scrolling, and every breakpoint, each landing in the chat as it's done (the GIF at the top).
-
-### Product features
-
-Claude builds the feature, then runs real QA on it and shows you the recording with every check ticking as it happens.
-
-<p align="center"><img src="docs/product-features.gif" alt="A new-trip form built and QA'd: date range, email validation, invites and create trip, 8 of 8 checks passing in the sidebar" width="100%"></p>
-
-### Video workflows
-
-A character sheet, then a vertical ad made from it, with the video's structure (hook, problem, product, proof, CTA) laid out beside the player.
-
-<p align="center"><img src="docs/video-workflows.gif" alt="A character sheet for a UGC persona lands in the chat, then an Instagram reel made from it plays with a Video structure sidebar" width="100%"></p>
-
-### And more
-
-<p align="center"><img src="docs/and-more.gif" alt="Use cases rolling past: website design, product features, video workflows, bug testing, motion graphics, pitch decks and more" width="100%"></p>
-
-<p align="center"><img src="docs/end-card.jpg" alt="show-your-work, with the two install commands" width="100%"></p>
 
 ## The problem
 
@@ -65,44 +40,47 @@ Every change, every time. That's the chaos this removes.
 
 ## What it does
 
-Claude **shows its work** in the conversation, the moment it's done:
+Claude **shows its work** in the conversation, the moment it's done. Pictures appear inline, unasked. Videos play right there, by themselves. And every one stays in the chat: scroll up and everything Claude showed you is still there.
 
-| | |
-|---|---|
-| 🖼 **Pictures in the chat** | A page, a slide, a chart, a mockup: it appears inline, unasked. |
-| ▶️ **Videos in the chat** | Claude records itself clicking through your app (Playwright, headless) and the run plays right there, by itself. |
-| ⧉ **Before / after QA** | The same flow on the original and the updated version. Switch **Original / Updated / Compare**; Compare plays them side by side, synced. |
-| ✅ **What changed + QA at a glance** | Each change with its timestamp (click to jump there), and the QA in three lines with a tick or cross. |
+### Website design
 
-## What you see
+Concepts, the built page recorded scrolling, and every breakpoint, each landing in the chat as it's done. That's the GIF at the top.
 
-### A QA run, played inline
+### Product features, with real QA
 
-The player above: Play/Pause, a clickable progress bar, ±5 s. The sidebar lists **what changed**; click one and the video jumps to that moment, and the one playing now lights up. The **QA** card sums up the checks in three lines.
+<p align="center"><img src="docs/product-features.gif" alt="A new-trip form built and QA'd: date range, email validation, invites and create trip, 8 of 8 checks passing in the sidebar" width="100%"></p>
 
-Click **⧉ Compare** and the original and updated runs play side by side. They're lined up by matching their frames, so when the original takes longer to load, it waits, and every step happens at the same moment on both sides. Under the picture, a line says what differs right now: `0:03 · Annual toggle updates prices · Original ✗ → Updated ✓`.
+Claude builds the feature, runs real QA on it with Playwright, and shows you the recording with every check ticking as it happens.
 
-### Pictures, the moment they're ready
+- **What changed** is listed beside the player. Click one and the video jumps to that moment; the one playing now lights up.
+- **QA** sums up the checks in three lines, each with a tick or a cross.
+- **⧉ Compare** plays the original and the updated run side by side. They're lined up by matching their frames, so when the original takes longer to load, it waits, and every step happens at the same moment on both sides. Under the picture, a line says what differs right now: `0:03 · Annual toggle updates prices · Original ✗ → Updated ✓`.
 
-<p align="center"><img src="docs/image.gif" alt="Claude shows a rendered page inline, then the user saves it to Downloads" width="80%"></p>
+### Video workflows
 
-One row of controls under every picture and video:
+<p align="center"><img src="docs/video-workflows.gif" alt="A character sheet for a UGC persona lands in the chat, then an Instagram reel made from it plays with a Video structure sidebar" width="100%"></p>
+
+A character sheet, then a vertical ad made from it, with the video's structure (hook, problem, product, proof, CTA) laid out beside the player.
+
+### And more
+
+<p align="center"><img src="docs/and-more.gif" alt="Use cases rolling past: website design, product features, video workflows, bug testing, motion graphics, pitch decks and more" width="100%"></p>
+
+Bug testing, motion graphics, pitch decks: if Claude made it, it shows it.
+
+### Under every picture and video
+
+One row of controls:
 
 - **↗ Open page**: the localhost or deployed URL, at the moment you're on (or **↗ View** to open the file itself)
 - **Save to Downloads**
 - **Copy path**: paste it straight back to Claude
 
-### Half-screen terminal? It adapts
-
-<img align="right" src="docs/narrow.jpg" alt="In a narrow window the report moves under the player, in two columns" width="42%">
-
-In a narrow window the report moves **under** the player instead of beside it: the Original / Updated / Compare switch on top, then what changed and the QA in two columns (one, if it's narrower still). Nothing is cut off; long titles wrap.
-
-Every window stays in the chat, too. Scroll up and every picture and video Claude showed you is still there.
-
-<br clear="right">
+Half-screen terminal? In a narrow window the report moves **under** the player instead of beside it: the Original / Updated / Compare switch on top, then what changed and the QA in two columns (one, if it's narrower still). Nothing is cut off; long titles wrap.
 
 ## Install
+
+<p align="center"><img src="docs/end-card.jpg" alt="show-your-work, with the two install commands" width="100%"></p>
 
 ```
 /plugin marketplace add iamumeransari/claude-show-your-work
@@ -190,7 +168,7 @@ Yes. It's open source under the MIT license.
 
 ## Try the demo
 
-[`examples/pricing`](examples/pricing) has the page and the QA script from the GIF above.
+[`examples/pricing`](examples/pricing) has a pricing page with a broken annual toggle and the Playwright QA script that records it before and after the fix.
 
 ```bash
 cd examples/pricing && npm i playwright
