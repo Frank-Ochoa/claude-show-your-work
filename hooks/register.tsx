@@ -1777,11 +1777,30 @@ export function isNewer(latest: string, current: string): boolean {
   return false
 }
 
-async function claude($: EngineInterface, args: string) {
-  return $.process.run(['sh', '-lc', `claude ${args}`], { timeoutMs: 120_000 })
+// Where Claude Code's CLI usually is, when it isn't on the session's PATH.
+const CLAUDE_BINARIES = ['claude', '.local/bin/claude', '.claude/local/claude', '/opt/homebrew/bin/claude', '/usr/local/bin/claude']
+let claudeBinary = ''
+
+// Runs Claude Code's CLI with the session's own environment (its PATH and
+// CLAUDE_CONFIG_DIR), so it changes this install and no other.
+async function claude($: EngineInterface, args: string[]) {
+  const known = CLAUDE_BINARIES.map(b => (b.startsWith('.') ? `${home}/${b}` : b))
+  const candidates = [...new Set([claudeBinary, ...known].filter(Boolean))]
+  for (const bin of candidates) {
+    const r = await $.process.run([bin, ...args], { timeoutMs: 120_000 }).catch(() => undefined)
+    if (r) {
+      claudeBinary = bin
+      return r
+    }
+  }
+  return undefined
 }
 
-async function checkForUpdate($: EngineInterface, current: string) {
+function jsonOf<T>(text: string | undefined, fallback: T): T {
+  try { return text ? (JSON.parse(text) as T) : fallback } catch { return fallback }
+}
+
+export async function checkForUpdate($: EngineInterface, current: string) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
   if (/^(0|false|off|no)$/i.test(off ?? '')) return
   const now = await $.clock.now()
@@ -1790,19 +1809,25 @@ async function checkForUpdate($: EngineInterface, current: string) {
 
   const r = await $.http.fetch(LATEST)
   if (!r.ok) return
-  const latest = String((JSON.parse(r.text) as { version?: string }).version ?? '')
+  const latest = String(jsonOf<{ version?: string }>(r.text, {}).version ?? '')
   if (!latest || !isNewer(latest, current)) return
 
   // A marketplace read from a folder is someone working on the plugin: leave it.
-  const markets = JSON.parse((await claude($, 'plugin marketplace list --json')).stdout || '[]') as { name: string; source: string }[]
+  const markets = jsonOf<{ name: string; source: string }[]>((await claude($, ['plugin', 'marketplace', 'list', '--json']))?.stdout, [])
   const market = markets.find(m => m.name === MARKETPLACE)
   if (!market || market.source === 'directory') return
-  const plugins = JSON.parse((await claude($, 'plugin list --json')).stdout || '[]') as { id: string; scope?: string }[]
-  const scope = plugins.find(p => p.id === `${PLUGIN}@${MARKETPLACE}`)?.scope ?? 'user'
+  const plugins = jsonOf<{ id: string; scope?: string; version?: string }[]>((await claude($, ['plugin', 'list', '--json']))?.stdout, [])
+  const installed = plugins.find(p => p.id === `${PLUGIN}@${MARKETPLACE}`)
+  if (!installed) return
+  // Already fetched by an earlier check; only a restart is missing.
+  if (installed.version && !isNewer(latest, installed.version)) {
+    $.ui.toast(`show-your-work ${latest} is installed. Restart Claude Code to use it.`)
+    return
+  }
 
-  await claude($, `plugin marketplace update ${MARKETPLACE}`)
-  const done = await claude($, `plugin update ${PLUGIN}@${MARKETPLACE} --scope ${scope}`)
-  if (done.exitCode !== 0) {
+  await claude($, ['plugin', 'marketplace', 'update', MARKETPLACE])
+  const done = await claude($, ['plugin', 'update', `${PLUGIN}@${MARKETPLACE}`, '--scope', installed.scope ?? 'user'])
+  if (done?.exitCode !== 0) {
     track('update_failed', { from: current, to: latest })
     return
   }
