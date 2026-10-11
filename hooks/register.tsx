@@ -44,8 +44,6 @@ const SIDE = 40
 const SIDEBAR = '#1d1e23'
 const WIDE_ENOUGH = 110
 const current = atom({ plugin: 'show-your-work', key: 'current' } as const, null)
-// Whether the one-time question about updates and usage stats is on screen.
-const asking = atom({ plugin: 'show-your-work', key: 'asking' } as const, false)
 
 let cwd = ''
 let home = ''
@@ -2000,31 +1998,8 @@ function jsonOf<T>(text: string | undefined, fallback: T): T {
   try { return text ? (JSON.parse(text) as T) : fallback } catch { return fallback }
 }
 
-// Updates and usage stats run only after the person says yes, once, in the
-// band above the prompt. An environment variable set to off wins over a yes.
-export type Consent = { updates: boolean; stats: boolean }
-export const consentOf = (value: unknown): Consent | null =>
-  !!value && typeof value === 'object' && 'updates' in value && 'stats' in value
-    ? { updates: (value as Consent).updates === true, stats: (value as Consent).stats === true }
-    : null
-const isOff = (value: string | undefined) => /^(0|false|off|no)$/i.test(value ?? '')
 let pluginVersion = '0.0.0'
 let statsContext: Props = {}
-
-// Starts what the person allowed. Without an answer yet, nothing runs.
-async function applyConsent($: EngineInterface) {
-  const consent = consentOf(await $.store.get('consent'))
-  if (!consent) return
-  if (consent.stats) await startTelemetry($, statsContext)
-  if (consent.updates) await checkForUpdate($, pluginVersion)
-}
-
-async function answer($: EngineInterface, consent: Consent) {
-  await $.store.set('consent', consent)
-  await update($, asking, () => false)
-  $.ui.toast(consent.updates || consent.stats ? 'Saved. Change it any time with /show-your-work-settings.' : 'Nothing will be sent or checked. Change it with /show-your-work-settings.')
-  await applyConsent($)
-}
 
 export async function checkForUpdate($: EngineInterface, current: string) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
@@ -2100,19 +2075,12 @@ export const register: Register = on => {
         has_ffmpeg: !!ff,
         os: isMac ? 'macos' : 'linux',
       }
-      // Both turned off by environment variables: nothing to ask.
-      const statsOff = isOff(await $.env.get('SHOW_YOUR_WORK_TELEMETRY')) || /^(1|true)$/i.test((await $.env.get('DO_NOT_TRACK')) ?? '')
-      const updatesOff = isOff(await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE'))
-      if (!consentOf(await $.store.get('consent')) && !(statsOff && updatesOff)) await update($, asking, () => true)
-      await applyConsent($)
+      await startTelemetry($, statsContext)
+      await checkForUpdate($, pluginVersion)
     })().catch(() => undefined)
     // Frames and converted pictures a week old go; a window that scrolls back
     // into view cuts its frames again from the source.
     void $.process.run(['sh', '-c', CLEAN_SH, TMP]).then(() => trimFrames($))
-    await $.command.register({
-      name: 'show-your-work-settings',
-      description: 'Choose whether show-your-work checks for updates and sends anonymous usage stats',
-    })
     await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',
@@ -2179,27 +2147,6 @@ export const register: Register = on => {
     pastedNames = (e.attachments ?? []).filter(a => a.type === 'image' && a.filename).map(a => a.filename!)
 
     return next(e)
-  })
-
-  // The one-time question, a single line above the prompt.
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if ((e.props as { hasSurvey?: boolean }).hasSurvey || !(await read($, asking))) return next(e)
-    const { Box, Button, Text } = $.ui.resolve(e)
-
-    return (
-      <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-        <Text>show-your-work can check GitHub for updates once a day and send anonymous usage counts (never files, paths or prompts).</Text>
-        <Button key="both" variant="primary" label="Allow both" onPress={() => void answer($, { updates: true, stats: true })} />
-        <Button key="updates" label="Updates only" onPress={() => void answer($, { updates: true, stats: false })} />
-        <Button key="none" label="No thanks" onPress={() => void answer($, { updates: false, stats: false })} />
-      </Box>
-    )
-  })
-
-  on('command.run', { command: 'show-your-work-settings' }, async ($) => {
-    await $.store.set('consent', null)
-    await update($, asking, () => true)
-    return { text: 'Choose above the prompt whether show-your-work checks for updates and sends anonymous usage stats.' }
   })
 
   on('command.run', { command: 'img' }, async ($, e) => {

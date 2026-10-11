@@ -59,6 +59,6 @@ export type Shown = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'show-your-work': { current: Shown | null; asking: boolean }
+    'show-your-work': { current: Shown | null }
   }
 }
