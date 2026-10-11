@@ -26,7 +26,11 @@ It works in Ghostty and kitty on macOS. It's free and open source.
 
 ## Who it's for
 
-People who use Claude Code in a terminal like Ghostty. You don't have to pull up another window, open an app, spin up localhost or do any manual QA. Claude does the work and shows it to you, with a recording of it going through every change it made.
+People who use Claude Code in a terminal like Ghostty and are tired of switching windows to see what Claude made.
+
+**Designing something?** Ask Claude for 4 concepts and they show up right in the chat. Before, Claude would build them as an HTML file you had to open, look through, then switch back to the terminal to say which one you liked. Now you never leave the terminal.
+
+**Building a feature?** You don't have to spin up localhost or do any manual QA. Claude does the work, tests it, and shows you a recording of it going through every change it made.
 
 It really adds up when you run a few Claude sessions at once, or go back and forth with Claude on the same thing.
 
