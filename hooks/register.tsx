@@ -1903,8 +1903,27 @@ export function nicknameOf(id: string): string {
   return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[Math.floor(h / 1000) % ANIMALS.length]} ${n}`
 }
 
+// /show-your-work-settings: usage stats and auto-update, each on or off.
+export function settingsChange(args: string): { key: 'statsOff' | 'updatesOff'; off: boolean } | null {
+  const m = /^\s*(stats|updates)\s+(on|off)\s*$/i.exec(args)
+  if (!m) return null
+
+  return { key: m[1]!.toLowerCase() === 'stats' ? 'statsOff' : 'updatesOff', off: m[2]!.toLowerCase() === 'off' }
+}
+
+export function settingsText(statsOn: boolean, updatesOn: boolean): string {
+  return [
+    'show-your-work settings',
+    `  Usage stats: ${statsOn ? 'on' : 'off'} (anonymous counts; never files, paths, prompts or location)`,
+    `  Auto-update: ${updatesOn ? 'on' : 'off'} (checks GitHub at most once a day)`,
+    '',
+    'Change with /show-your-work-settings stats off, or updates off (on turns them back on).',
+  ].join('\n')
+}
+
 async function startTelemetry($: EngineInterface, context: Props) {
   if (!POSTHOG_KEY) return
+  if (await $.store.get('statsOff')) return
   const optOut = await $.env.get('SHOW_YOUR_WORK_TELEMETRY')
   const dnt = await $.env.get('DO_NOT_TRACK')
   const quiet = await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
@@ -2005,6 +2024,7 @@ let statsContext: Props = {}
 export async function checkForUpdate($: EngineInterface, current: string) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
   if (/^(0|false|off|no)$/i.test(off ?? '')) return
+  if (await $.store.get('updatesOff')) return
   const now = await $.clock.now()
   if (now - Number((await $.store.get('updateCheckedAt')) ?? 0) < DAY_MS) return
   await $.store.set('updateCheckedAt', now)
@@ -2083,6 +2103,11 @@ export const register: Register = on => {
     // into view cuts its frames again from the source.
     void $.process.run(['sh', '-c', CLEAN_SH, TMP]).then(() => trimFrames($))
     await $.command.register({
+      name: 'show-your-work-settings',
+      description: 'Turn show-your-work usage stats or auto-update on or off',
+      argumentHint: '[stats|updates] [on|off]',
+    })
+    await $.command.register({
       name: 'img',
       description: 'Show an image or video in a pane: /img <path>',
       argumentHint: '<path>',
@@ -2148,6 +2173,22 @@ export const register: Register = on => {
     pastedNames = (e.attachments ?? []).filter(a => a.type === 'image' && a.filename).map(a => a.filename!)
 
     return next(e)
+  })
+
+  on('command.run', { command: 'show-your-work-settings' }, async ($, e) => {
+    const change = settingsChange(e.args)
+    if (change) {
+      await $.store.set(change.key, change.off)
+      if (change.key === 'statsOff' && change.off) {
+        isOn = false
+        queue = []
+      }
+    } else if (e.args.trim()) {
+      return { text: 'Usage: /show-your-work-settings stats off, or updates off (on turns them back on).' }
+    }
+    const statsOn = !(await $.store.get('statsOff')), updatesOn = !(await $.store.get('updatesOff'))
+
+    return { text: (change ? `Saved. ${change.key === 'statsOff' ? 'Usage stats' : 'Auto-update'} is now ${change.off ? 'off' : 'on'}.\n\n` : '') + settingsText(statsOn, updatesOn) }
   })
 
   on('command.run', { command: 'img' }, async ($, e) => {

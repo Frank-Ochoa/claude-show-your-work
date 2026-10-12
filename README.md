@@ -84,11 +84,11 @@ In tmux, add `set -g allow-passthrough on` to `~/.tmux.conf`. If the setting is 
 
 ### Does it update itself?
 
-Yes. When Claude Code starts, the plugin checks GitHub for a new version once a day and installs it. Set `SHOW_YOUR_WORK_AUTO_UPDATE=0` to turn this off.
+Yes. When Claude Code starts, the plugin checks GitHub for a new version once a day and installs it. Turn this off with `/show-your-work-settings updates off`.
 
 ### Does it collect any data?
 
-It sends anonymous usage counts, such as which versions are in use and how often images and videos are shown. It never sends files, file names, paths, prompts or anything you write, and it never records your IP address or location. Set `SHOW_YOUR_WORK_TELEMETRY=0` to turn it off.
+It sends anonymous usage counts, such as which versions are in use and how often images and videos are shown. It never sends files, file names, paths, prompts or anything you write, and it never records your IP address or location. Turn it off with `/show-your-work-settings stats off`.
 
 ## Feedback
 

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isNewer, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
+import { isNewer, nicknameOf, settingsChange, settingsText, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
@@ -66,3 +66,11 @@ test('each install gets a made-up name, the same every time', () => {
   expect(nicknameOf(id)).not.toBe(nicknameOf('0b7e0d1a-1234-4c4c-9a9a-aaaaaaaaaaaa'))
 })
 
+
+test('the settings command reads stats or updates, on or off', () => {
+  expect(settingsChange('stats off')).toEqual({ key: 'statsOff', off: true })
+  expect(settingsChange(' Updates ON ')).toEqual({ key: 'updatesOff', off: false })
+  expect(settingsChange('')).toBe(null)
+  expect(settingsChange('stats maybe')).toBe(null)
+  expect(settingsText(true, false).includes('Auto-update: off')).toBe(true)
+})
