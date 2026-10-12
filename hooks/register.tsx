@@ -884,8 +884,15 @@ type Source = { png: string } | { file: string; format: 'png' }
 // Bytes when the file reads; its path as a last resort.
 // The terminal reads the file itself: a path crosses, not the picture. Sending
 // bytes (b6b8b14) moved ~400 KB a frame and froze playback.
-export function pngSource(_$: EngineInterface, file: string): Promise<Source> {
-  return Promise.resolve({ file, format: 'png' as const })
+// Over ssh the terminal is on another machine and can't read the file, so the
+// bytes have to cross after all.
+let sendBytes = false
+export async function pngSource($: EngineInterface, file: string): Promise<Source> {
+  if (sendBytes) {
+    const read = await $.fs.read(file, { as: 'bytes' }).catch(() => null) as unknown as { base64?: string } | null
+    if (read?.base64) return { png: read.base64 }
+  }
+  return { file, format: 'png' as const }
 }
 
 // Whether the terminal draws pictures. Some sessions cannot (a background
@@ -910,6 +917,12 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
   probed = true
   void $.clock.sleep(250).then(async () => {
     const r = await $.ui.blit({ requestId: site, key, source: pic.src })
+    if (r.deny && /cannot read files/i.test(r.deny) && !sendBytes) {
+      sendBytes = true
+      probed = false
+      redraw($)
+      return
+    }
     if (r.deny && /alt/i.test(r.deny)) {
       canImage = false
       drawCause = causeOf(inTmux, terminalName)
@@ -2080,6 +2093,7 @@ export const register: Register = on => {
       const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
       terminalName = terminal
       inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
+      if ((await $.env.get('SSH_CONNECTION')) || (await $.env.get('SSH_TTY'))) sendBytes = true
       // tmux with passthrough off never lets a picture through: known before the first one.
       if (inTmux) {
         const pass = await $.process.run(['tmux', 'show', '-gv', 'allow-passthrough']).catch(() => null)
