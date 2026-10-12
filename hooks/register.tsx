@@ -339,10 +339,10 @@ async function prepareVideo($: EngineInterface, real: string, title: string, key
       return { kind: 'video', path: frameFile(frames, 0), source: real, width: meta.width, height: meta.height, title, generation: ++generation, frames }
     }
   }
-  const probe = await $.process.run([ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', real])
+  const durationRun = await $.process.run([ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', real])
   // Some recordings (MediaRecorder webm) carry no duration: sample those at the
   // top rate. The clip's length is then what the frames cover.
-  const probed = Number(probe.stdout.trim())
+  const probed = Number(durationRun.stdout.trim())
   const fps = sampleRate(Number.isFinite(probed) && probed > 0 ? probed : 1)
   generation += 1
   const dir = key ? `${TMP}/v-${key}` : `${TMP}/v${generation}-${Math.floor(await $.clock.now())}`
