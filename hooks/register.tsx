@@ -2431,7 +2431,6 @@ export async function checkForUpdate($: EngineInterface, current: string, branch
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
   if (/^(0|false|off|no)$/i.test(off ?? '')) return
   if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return
-  if (earlierNo(await $.store.get('consent'), null, await $.store.get('updatesOff')).isUpdatesOff) return
   const now = await $.clock.now()
   if (now - Number((await $.store.get('updateCheckedAt')) ?? 0) < DAY_MS) return
   await $.store.set('updateCheckedAt', now)
@@ -2494,17 +2493,16 @@ async function moveTo($: EngineInterface, branch: Branch, market: { url?: string
 
 // ── Settings and welcome ─────────────────────────────────────────────────
 
-// Three switches, kept in the plugin's store (a /config row would reload the
+// The switches, kept in the plugin's store (a /config row would reload the
 // plugin on every change). The environment variables still turn updates and
 // usage counts off whatever these say.
 export const SETTINGS = [
-  { field: 'show_automatically', title: 'Use plugin', options: ['Automatically', 'When I ask'], text: 'Screenshots and recordings of what Claude builds' },
   { field: 'stable_updates', title: 'Updates', options: ['Stable releases', 'Latest'], text: 'Automatically install plugin updates from GitHub' },
-  { field: 'usage_stats', title: 'Usage data', options: ['Share anonymously', "Don't share"], text: 'Helps fix bugs and crashes and shape future updates. No sensitive data is ever shared' },
+  { field: 'usage_stats', title: 'Usage data', options: ['Share anonymously', "Don't share"], text: 'Helps fix bugs and improve the product experience. No sensitive data is ever shared' },
 ] as const
 type Field = (typeof SETTINGS)[number]['field']
 // Each switch is true on its first option, the default.
-const settings: Record<Field, boolean> = { show_automatically: true, stable_updates: true, usage_stats: true }
+const settings: Record<Field, boolean> = { stable_updates: true, usage_stats: true }
 const WELCOME = 'show-your-work-welcome'
 // The settings pane's redraws.
 // The viewport is the whole screen; a docked pane is narrower and shorter, so
@@ -2523,7 +2521,8 @@ const welcome = atom({ plugin: 'show-your-work', key: 'welcome' } as const, 0)
 export const EARLIER_KEYS = ['installId', 'updateCheckedAt', 'consent', 'statsOff', 'updatesOff']
 export const hasUsedBefore = (values: unknown[]) => values.some(value => value !== undefined && value !== null)
 
-// A no given before these settings (0.5.12's question, 0.5.16's command) stays a no.
+// A no to usage data given before these settings (0.5.12's question, 0.5.16's command) stays a no.
+// Updates are on for everyone: fixes have to reach every install.
 export const earlierNo = (consent: unknown, statsOff: unknown, updatesOff: unknown) => {
   const asked = consent && typeof consent === 'object' ? consent as { stats?: unknown; updates?: unknown } : {}
   return { isStatsOff: statsOff === true || asked.stats === false, isUpdatesOff: updatesOff === true || asked.updates === false }
@@ -2544,12 +2543,6 @@ async function switchSetting($: EngineInterface, field: Field, value: boolean) {
   if (field === 'usage_stats' && !value) isOn = false
   if (field === 'usage_stats' && value && isWelcomed) await startTelemetry($, statsContext)
   // A new channel is followed now.
-  // Choosing a channel is choosing updates: an earlier no is lifted.
-  if (field === 'stable_updates') {
-    await $.store.delete('updatesOff')
-    const asked = await $.store.get('consent')
-    if (asked && typeof asked === 'object') await $.store.set('consent', { ...asked, updates: true })
-  }
   if (field === 'stable_updates' && isWelcomed) {
     await $.store.set('updateCheckedAt', 0)
     void checkForUpdate($, pluginVersion, value ? BRANCHES.stable : BRANCHES.latest).catch(() => undefined)
@@ -2574,9 +2567,9 @@ async function openWelcome($: EngineInterface) {
   await openTour($)
 }
 
-// /show-your-work: the three switches, in a pane.
+// /show-your-work: the switches, in a pane.
 async function openSettings($: EngineInterface) {
-  await $.ui.open({ id: WELCOME, title: 'Settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 11, columns: 70 })
+  await $.ui.open({ id: WELCOME, title: 'Settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 10, columns: 70 })
   await update($, welcome, n => n + 1)
 }
 
@@ -2619,7 +2612,7 @@ async function prepareSplash($: EngineInterface) {
   redraw($)
 }
 
-// /show-your-work's pane: the three switches, and the way back into the tour.
+// /show-your-work's pane: the switches, and the way back into the tour.
 function Settings(ui: Ui, $: EngineInterface) {
   const { Box, Text, Button } = ui
   return (
@@ -2662,7 +2655,7 @@ function SettingRows(ui: Ui, $: EngineInterface) {
           })}
         </Box>
       ))}
-      <Box marginTop={1}><Text dimColor>Usage data is anonymous and helps fix bugs and crashes. No sensitive data is ever shared.</Text></Box>
+      <Box marginTop={1}><Text dimColor>Usage data is anonymous and helps fix bugs and improve the product experience. No sensitive data is ever shared.</Text></Box>
     </Box>
   )
 }
@@ -2940,10 +2933,8 @@ export const register: Register = on => {
       name: 'show_image',
       description:
         "Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\n" +
-        (settings.show_automatically
-          ? 'Use it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. ' +
-            "Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\n"
-          : 'Use it when the user asks to see something.\n\n') +
+        'Use it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. ' +
+        "Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\n" +
         'When the image shows work you changed, also pass `changes` (what you changed, a few words each) and `compare` (an image of the same view from before the change), so the user can switch between Original, Updated and Compare. ' +
         'Pass `summary` only for checks you actually ran. When you show a new version of something you showed earlier, pass `previous` with its #id so both stay in the same history.\n\n' +
         "The image goes to the user's screen, not to you. Read the file yourself only if you need to check it.\n\n" +
@@ -2955,9 +2946,7 @@ export const register: Register = on => {
       name: 'show_video',
       description:
         "Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\n" +
-        (settings.show_automatically
-          ? 'Use it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\n'
-          : 'Use it when the user asks to see a recording or video.\n\n') +
+        'Use it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\n' +
         'When the video shows work you changed, pass `changes`, each with `at` (the second it appears), and `checks` for what you tested, also with `at`. ' +
         'For a fix, record the same steps on the old version and pass that file as `compare` with its own `compare_checks`; the two play side by side, in sync. ' +
         'Pass `summary` only for checks you actually ran, and `previous` with an earlier #id when this is a new version of something you showed.\n\n' +
@@ -2977,7 +2966,6 @@ export const register: Register = on => {
     const composed = await next(e)
     if (!e.tools.some(t => TOOLS.includes(t))) return composed
     if (canImage) {
-      if (!settings.show_automatically) return composed
       return {
         sections: [...composed.sections, {
           id: 'show-your-work:show-visual-work', scope: 'session',

@@ -6,11 +6,11 @@
 - Once a day (`updateCheckedAt`), the updater fetches `.claude-plugin/plugin.json` from the channel's branch. If the version is newer it runs `claude plugin marketplace update` and `claude plugin update`; the new version loads in the next session. Failures say nothing to the user.
 - An install pinned to a tag stays on it. A branch that doesn't exist on GitHub yet: stay where it is.
 - **Switching channel** moves the marketplace to `url#branch` and reinstalls (`MOVE_SH`). It runs detached (`DETACH`), so quitting Claude Code halfway can't leave the plugin uninstalled. If the new branch fails, the old source goes back, retried twice.
-- Off with `SHOW_YOUR_WORK_AUTO_UPDATE=0` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. Choices saved by earlier versions (`consent` in 0.5.12, `updatesOff` and `statsOff` in 0.5.16) carry over (`earlierNo`); choosing a channel in the settings replaces them.
+- Off with `SHOW_YOUR_WORK_AUTO_UPDATE=0` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. Update choices saved by earlier versions (`consent` in 0.5.12, `updatesOff` in 0.5.16) are no longer read; their usage data choice (`statsOff`, `consent.stats`) carries over (`earlierNo`).
 
 ## Settings
 
-- `/show-your-work` opens the settings pane: show automatically, update channel, usage data.
+- `/show-your-work` opens the settings pane: update channel and usage data.
 - Saved in the plugin store under `settings`.
 - `/show-your-work tour` starts the tour. There is no other settings command (0.5.16's `/show-your-work-settings` was dropped in 0.6.0).
 

@@ -141,12 +141,11 @@ test('when claude is not on the PATH it is found where it is usually installed',
   expect(args(e.runs)).toContain('plugin update show-your-work@iamumeransari --scope user')
 })
 
-test('updates turned off before 0.6.0 stay off', async () => {
+test('an old no to updates (0.5.12, 0.5.16) no longer stops them', async () => {
   for (const [key, value] of [['updatesOff', true], ['consent', { updates: false, stats: true }]] as const) {
-    const e = engine()
+    const e = engine({ latest: '0.6.1' })
     e.store.set(key, value)
-    await checkForUpdate(e.$, '0.5.16')
-    expect(e.fetched.length).toBe(0)
-    expect(e.runs.length).toBe(0)
+    await checkForUpdate(e.$, '0.6.0', BRANCHES.stable)
+    expect(e.fetched.length).toBe(1)
   }
 })
