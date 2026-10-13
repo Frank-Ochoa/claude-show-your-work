@@ -20,7 +20,7 @@ A Claude Code plugin that lets you see Claude's work without leaving the termina
 Run these two commands in Claude Code:
 
 ```
-/plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git
+/plugin marketplace add https://github.com/iamumeransari/claude-show-your-work.git#releases
 /plugin install show-your-work@iamumeransari
 ```
 
@@ -45,11 +45,11 @@ Claude shows you its work in the chat whenever it builds or changes something vi
 
 Compare design concepts side by side, or check one page at desktop, tablet and phone widths in a single image.
 
-### Testing
+### Feature testing (QA)
 
 <p align="center"><img src="docs/qa-product.jpg" alt="A recording of a new-trip form being tested, with what changed and the checks beside it" width="100%"></p>
 
-Claude records its Playwright test runs and plays them in the chat. The changes are listed beside the video, and clicking one jumps to that moment. Each check turns green or red when the video reaches it.
+Claude tests the features it builds with Playwright, records each run and plays it in the chat. The changes are listed beside the video, and clicking one jumps to that moment. Each check turns green or red when the video reaches it.
 
 For a bug fix, Compare plays the old and new versions side by side, in sync.
 
