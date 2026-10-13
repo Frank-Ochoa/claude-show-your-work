@@ -2384,6 +2384,7 @@ export const register: Register = on => {
     const shown = await read($, current)
     if (!shown) return <Text dimColor>Nothing to show yet. Run /img path/to/file</Text>
 
-    return Viewer($, e, atStep(shown, PANE), PANE, true, e.viewport)
+    // viewport is the whole screen; a docked pane is narrower, so it sizes to bodyColumns.
+    return Viewer($, e, atStep(shown, PANE), PANE, true, { ...e.viewport, columns: e.props.bodyColumns })
   })
 }
