@@ -1,4 +1,4 @@
-export type Frames = { dir: string; count: number; fps: number; duration: number; lead?: number }
+export type Frames = { dir: string; count: number; fps: number; duration: number; lead?: number; cut?: number }
 
 // One QA check: its name, whether it passed, and when it happens in a clip.
 export type Check = { name: string; ok: boolean; at?: number; url?: string }
@@ -23,8 +23,12 @@ export type Shown = {
   source?: string
   /** The file as the user knows it (source is the kept copy). */
   origin?: string
+  // the picture drawn (a video's frames), in pixels
   width: number
   height: number
+  /** The file's own size, for its label, when the picture drawn is another size. */
+  sourceWidth?: number
+  sourceHeight?: number
   title: string
   generation: number
   frames?: Frames
@@ -59,6 +63,6 @@ export type Shown = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'show-your-work': { current: Shown | null }
+    'show-your-work': { current: Shown | null; welcome: number }
   }
 }

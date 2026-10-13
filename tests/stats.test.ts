@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isNewer, nicknameOf, settingsChange, settingsText, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
+import { EARLIER_KEYS, earlierNo, hasUsedBefore, isNewer, isStatsBlocked, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
@@ -46,7 +46,9 @@ test('a picture that cannot draw says why, and tells Claude it was not seen', ()
   expect(causeOf(false, 'ghostty')).toBe('background')
   expect(causeOf(false, 'apple_terminal')).toBe('terminal')
   expect(cantDraw('tmux', 'a.png', 'picture', 'id1').command).toBe('set -g allow-passthrough on')
-  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').title).toBe("This terminal can't show pictures")
+  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').title).toBe("Your terminal isn't supported by show-your-work")
+  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').link?.href).toBe('https://ghostty.org/download')
+  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').claude.includes('https://ghostty.org/download')).toBe(true)
   expect(cantDraw('background', 'a.png', 'video', 'id1').command.includes('--resume id1')).toBe(true)
   for (const cause of ['tmux', 'terminal', 'background'] as const) expect(cantDraw(cause, 'a.png', 'picture', '').claude.includes('saw a notice')).toBe(true)
 })
@@ -67,10 +69,26 @@ test('each install gets a made-up name, the same every time', () => {
 })
 
 
-test('the settings command reads stats or updates, on or off', () => {
-  expect(settingsChange('stats off')).toEqual({ key: 'statsOff', off: true })
-  expect(settingsChange(' Updates ON ')).toEqual({ key: 'updatesOff', off: false })
-  expect(settingsChange('')).toBe(null)
-  expect(settingsChange('stats maybe')).toBe(null)
-  expect(settingsText(true, false).includes('Auto-update: off')).toBe(true)
+test('a no given before 0.6.0 is kept, and only a no', () => {
+  expect(earlierNo(undefined, true, undefined)).toEqual({ isStatsOff: true, isUpdatesOff: false })
+  expect(earlierNo({ stats: false, updates: true }, undefined, undefined)).toEqual({ isStatsOff: true, isUpdatesOff: false })
+  expect(earlierNo({ stats: true, updates: false }, false, undefined)).toEqual({ isStatsOff: false, isUpdatesOff: true })
+  expect(earlierNo(null, undefined, undefined)).toEqual({ isStatsOff: false, isUpdatesOff: false })
+})
+
+test('only a fresh install sees the welcome, never someone updating', () => {
+  const stored = (entries: Record<string, unknown>) => EARLIER_KEYS.map(key => entries[key])
+  expect(hasUsedBefore(stored({}))).toBe(false)
+  // Any one of these, left by an earlier version, means an update.
+  for (const entries of [{ installId: 'a-b' }, { updateCheckedAt: 1 }, { consent: { stats: false, updates: false } }, { statsOff: true }, { updatesOff: false }]) {
+    expect(hasUsedBefore(stored(entries))).toBe(true)
+  }
+})
+
+test('usage data stays off under any of its opt-outs, Claude Code\'s own included', () => {
+  expect(isStatsBlocked(undefined, undefined, undefined)).toBe(false)
+  expect(isStatsBlocked('0', undefined, undefined)).toBe(true)
+  expect(isStatsBlocked(undefined, '1', undefined)).toBe(true)
+  expect(isStatsBlocked(undefined, undefined, '1')).toBe(true)
+  expect(isStatsBlocked(undefined, undefined, 'true')).toBe(true)
 })

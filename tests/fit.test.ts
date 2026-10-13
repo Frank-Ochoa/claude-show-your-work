@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf, looseName, pngDims } from '../hooks/register'
+import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, cellOf, frameWidth, isAtLeast, isInstalledCopy, paneSize, layoutOf, targetBox, drawBox, pixelsFor, pairHeightOf, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf, looseName, pngDims } from '../hooks/register'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -105,7 +105,7 @@ test('open page follows the latest check with a url', () => {
 })
 
 test('the resume command names this session', () => {
-  expect(resumeCommand('abc-123')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume abc-123')
+  expect(resumeCommand('abc-123')).toBe('claude stop abc-123; CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume abc-123')
   expect(resumeCommand('')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume')
 })
 
@@ -141,6 +141,17 @@ test('runs line up by how their frames look, even where one waits longer', () =>
   const original = [0, 40, 80, 80, 80, 120, 160, 200].map(frame)
   const match = matchOf(align(updated, original), updated.length)
   expect(match).toEqual([0, 1, 4, 5, 6, 7])
+})
+
+test('a screen only one run shows can not pull the other out of time', () => {
+  // the same steps at the same pace; the fixed run then shows a message the
+  // broken one never does, for its last third
+  const frame = (v: number) => Array(8).fill(v)
+  const fixed = Array.from({ length: 30 }, (_, i) => frame(i < 20 ? i * 5 : 250))
+  const broken = Array.from({ length: 30 }, (_, i) => frame(i < 20 ? i * 5 : 95))
+  const match = matchOf(align(fixed, broken, 0.01, 3, 0.02), fixed.length)
+  match.forEach((j, i) => expect(Math.abs(j - i)).toBeLessThanOrEqual(3))
+  expect(match.at(-1)).toBe(29)
 })
 
 test('the QA line totals the summary', () => {
@@ -196,7 +207,7 @@ test('earlier versions arrive as paths, notes, or JSON text', () => {
   expect(versionsOf('["/a"]')).toEqual([{ path: '/a' }])
   expect(versionsOf('/a')).toEqual([{ path: '/a' }])
   expect(versionsOf(undefined)).toEqual([])
-  expect(noteOf([{ title: 'Centred play' }, { title: 'Cleaner card' }], undefined, 'Hero')).toBe('Centred play, Cleaner card')
+  expect(noteOf([{ title: 'Centred play' }, { title: 'Cleaner card' }], undefined, 'Hero')).toBe('Centred play and 1 more')
   expect(noteOf(undefined, undefined, 'Hero')).toBe('Hero')
 })
 
@@ -256,4 +267,118 @@ test('a PNG header gives its size without any tool (Linux)', () => {
   const onePx = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
   expect(pngDims(onePx)).toEqual({ width: 1, height: 1 })
   expect(pngDims(btoa('not a png at all, just some text here'))).toBe(null)
+})
+
+test('with the cell size known, a small picture gets a box its own pixels fill', () => {
+  // 1600 px on Retina cells of 25 x 54 px: Ghostty never draws it larger.
+  const box = fit(1600, 615, 105, 22, { width: 25, height: 54 })
+  expect(box.rows).toBe(11)
+  expect(box.columns).toBe(62)
+})
+
+test('with the cell size known, a big picture is never wider than its box', () => {
+  const px = { width: 15.4, height: 33 }
+  const box = fit(1800, 1125, 105, 22, px)
+  // Drawn at the box's height, the picture's width still fits the columns.
+  expect((box.rows * px.height * 1800) / 1125).toBeLessThanOrEqual(box.columns * px.width)
+  expect(box.rows).toBeLessThanOrEqual(22)
+})
+
+test('the cell size comes from the tty size, and is unknown without pixels', () => {
+  expect(cellOf('40 150 2400 1280\n')).toEqual({ width: 16, height: 32 })
+  expect(cellOf('40 150 2400 1280\n', 2)).toEqual({ width: 32, height: 64 })
+  expect(cellOf('40 150 0 0')).toBe(null)
+  expect(cellOf('')).toBe(null)
+})
+
+test('video frames are cut as wide as the window shows them, up to 2400 px', () => {
+  // A full Retina window: 157 by 39 cells of 32.1 by 68.5 screen pixels.
+  const term = { columns: 157, rows: 39 }, px = { width: 32.1, height: 68.5 }
+  expect(frameWidth(1600, 800, term, px)).toBe(2400)
+  const tall = frameWidth(1600, 1000, term, px)
+  expect(tall).toBeGreaterThan(1600)
+  expect(tall).toBeLessThan(2400)
+  // Half a window: narrower than 1600, so the frames are smaller too.
+  expect(frameWidth(1600, 800, { columns: 78, rows: 39 }, px)).toBeLessThan(1600 * 1.5)
+  // Nothing measured: 1600 at most, as before.
+  expect(frameWidth(3000, 1500, null, null)).toBe(1600)
+  expect(frameWidth(1280, 720, null, null)).toBe(1280)
+})
+
+test('versions compare by number, not by text', () => {
+  expect(isAtLeast('2.1.296', '2.1.295')).toBe(true)
+  expect(isAtLeast('2.1.295', '2.1.295')).toBe(true)
+  expect(isAtLeast('2.1.294', '2.1.295')).toBe(false)
+  expect(isAtLeast('2.1.1000', '2.1.295')).toBe(true)
+  expect(isAtLeast('2.2.0', '2.1.295')).toBe(true)
+  expect(isAtLeast('2.1.296-dev', '2.1.295')).toBe(true)
+})
+
+test('only an installed copy sends usage data, never one loaded from a folder', () => {
+  expect(isInstalledCopy('/Users/a/.claude/plugins/cache/iamumeransari/show-your-work/0.6.0')).toBe(true)
+  expect(isInstalledCopy('/Users/a/claude-mods/claude-show-your-work')).toBe(false)
+  expect(isInstalledCopy('/Users/a/Client Sites/show-your-work')).toBe(false)
+})
+
+test('a docked pane sizes to its own width, not the whole screen', () => {
+  expect(paneSize({ columns: 267, rows: 60 }, { bodyColumns: 45 })).toEqual({ columns: 45, rows: 60 })
+  // A pane docked under the chat is short: the picture fits its height too.
+  expect(paneSize({ columns: 160, rows: 60 }, { bodyColumns: 150, scroll: { bodyRows: 12 } })).toEqual({ columns: 150, rows: 12 })
+  expect(paneSize({ columns: 160, rows: 60 }, { bodyColumns: 150, bodyRows: 14 })).toEqual({ columns: 150, rows: 14 })
+  expect(paneSize({ columns: 120, rows: 40 }, {})).toEqual({ columns: 120, rows: 40 })
+  expect(paneSize(undefined, { bodyColumns: 45 })).toBe(undefined)
+  // The narrower width gives a smaller picture.
+  expect(sizeFor(480, 240, 45 - 6, 60, true).columns).toBeLessThanOrEqual(39)
+})
+
+test('side by side is cut tall enough to fill the window, never taller than its sides', () => {
+  expect(pairHeightOf({ height: 1000 }, { height: 1000 })).toBe(720)
+  expect(pairHeightOf({ height: 1080 }, { height: 541 })).toBe(540)
+  expect(pairHeightOf({ height: 0 }, { height: 0 })).toBe(720)
+})
+
+// Retina cell: 9×18 points, 2 pixels a point.
+const RETINA = { width: 18, height: 36 }
+
+test('the layout puts the report beside the picture only when there is one and room for it', () => {
+  expect(layoutOf({ columns: 160, rows: 50, isPane: false, hasReport: true }).isWide).toBe(true)
+  expect(layoutOf({ columns: 160, rows: 50, isPane: false, hasReport: false }).isWide).toBe(false)
+  expect(layoutOf({ columns: 100, rows: 50, isPane: false, hasReport: true }).isWide).toBe(false)
+  // Beside the report, the picture has less room.
+  expect(layoutOf({ columns: 160, rows: 50, isPane: false, hasReport: true }).maxCols).toBeLessThan(layoutOf({ columns: 160, rows: 50, isPane: false, hasReport: false }).maxCols)
+  // A short pane keeps its controls: the picture gets what's left.
+  expect(layoutOf({ columns: 150, rows: 20, isPane: true, hasReport: false }).maxRows).toBe(8)
+})
+
+test('a picture made at the prepared width fills its box, at any window size and shape', () => {
+  for (const [columns, rows] of [[80, 30], [120, 40], [160, 50], [240, 70], [300, 90]] as const) {
+    for (const [w, h] of [[2400, 1500], [1600, 1000], [1920, 1080], [900, 1600], [3000, 600], [400, 300]] as const) {
+      const made = frameWidth(w, h, { columns, rows }, RETINA)
+      const madeHeight = Math.round((made * h) / w)
+      const layout = layoutOf({ columns, rows, isPane: false, hasReport: false })
+      const target = targetBox(made, madeHeight, layout, RETINA)
+      const drawn = drawBox(made, madeHeight, layout, RETINA)
+      // Small in a big box was the bug: the drawn box is the whole target, or within a cell of it.
+      if (made < 2400) {
+        expect(drawn.columns).toBeGreaterThanOrEqual(target.columns - 1)
+        expect(drawn.rows).toBeGreaterThanOrEqual(target.rows - 1)
+      }
+      expect(drawn.columns).toBeLessThanOrEqual(layout.maxCols)
+      expect(drawn.rows).toBeLessThanOrEqual(layout.maxRows)
+    }
+  }
+})
+
+test('a picture short of pixels is drawn whole at its own size, never cropped or stretched', () => {
+  const layout = layoutOf({ columns: 200, rows: 60, isPane: false, hasReport: false })
+  const target = targetBox(800, 500, layout, RETINA)
+  const drawn = drawBox(800, 500, layout, RETINA)
+  expect(drawn.columns).toBeLessThan(target.columns)
+  // Its own shape: 800×500 is 8:5, in 2:1 cells.
+  expect(Math.abs((drawn.columns * RETINA.width) / (drawn.rows * RETINA.height) - 1.6)).toBeLessThan(0.15)
+  // And the pixels that would fill the target are asked for, within limits.
+  expect(pixelsFor(target, RETINA)).toBeGreaterThan(800)
+  expect(pixelsFor({ columns: 500 }, RETINA)).toBe(2400)
+  expect(pixelsFor({ columns: 5 }, RETINA)).toBe(320)
+  expect(pixelsFor(target, null)).toBe(1600)
 })
