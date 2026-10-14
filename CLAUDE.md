@@ -14,6 +14,7 @@ A Claude Code plugin that draws pictures and videos in the chat (Ghostty). The c
 
 Before changing an area, read its notes in `docs/technical/`:
 
+- `architecture.md`: the modules, and a tool call traced from Claude to the terminal
 - `plugin-loader-and-hooks.md`: what the hooks loader rejects, and engine behaviour that isn't obvious
 - `showing-images.md`: how pictures reach the screen, sizing, Ghostty's limits, ssh and background sessions
 - `playing-video.md`: how videos become frames, chunks, the 256-colour palette
