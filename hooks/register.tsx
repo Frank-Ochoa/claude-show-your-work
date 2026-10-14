@@ -2384,7 +2384,7 @@ async function startTelemetry($: EngineInterface, context: Props) {
   // holds the setup it runs on, never anything about who uses it.
   // No location, ever: no IP is sent, and PostHog is told not to look one up.
   base = { ...context, $ip: null, $geoip_disable: true }
-  const profile = { $set: { ...context, name: nicknameOf(installId) }, $set_once: { first_plugin_version: String(context.plugin_version ?? "") } }
+  const profile = { $set: { ...context, name: nicknameOf(installId), update_channel: settings.stable_updates ? 'stable' : 'latest', usage_data: 'on' }, $set_once: { first_plugin_version: String(context.plugin_version ?? "") } }
   if (isNew) track('installed', profile)
   track('session_started', profile)
   $.clock.every(FLUSH_MS, () => void flush($))
@@ -2589,7 +2589,18 @@ async function switchSetting($: EngineInterface, field: Field, value: boolean) {
   settings[field] = value
   act(`setting_${field}_${value ? 'first' : 'second'}`)
   await $.store.set('settings', { ...settings })
-  if (field === 'usage_stats' && !value) isOn = false
+  // The profile keeps the install's current choice of update channel.
+  if (field === 'stable_updates') track('settings_changed', { $set: { update_channel: value ? 'stable' : 'latest' } })
+  // Turning usage data off sends one last signal saying so, then nothing more.
+  if (field === 'usage_stats' && !value && isOn) {
+    track('usage_data_turned_off', { $set: { usage_data: 'off' } })
+    await flush($).catch(() => undefined)
+  }
+  // Off means off: nothing queued is kept for later.
+  if (field === 'usage_stats' && !value) {
+    isOn = false
+    queue = []
+  }
   if (field === 'usage_stats' && value && isWelcomed) await startTelemetry($, statsContext)
   // A new channel is followed now.
   if (field === 'stable_updates' && isWelcomed) {
