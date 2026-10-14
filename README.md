@@ -12,6 +12,7 @@
   <a href="#install"><img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black" alt="Linux"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white" alt="Windows"></a>
+  <a href="https://github.com/iamumeransari/claude-show-your-work/actions/workflows/ci.yml"><img src="https://github.com/iamumeransari/claude-show-your-work/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
 </p>
 

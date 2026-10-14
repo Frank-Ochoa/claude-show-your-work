@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main, releases, latest]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint, validate and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Lint
+        run: npx --yes @biomejs/biome@1.9.4 lint hooks tests types
+
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.299
+
+      - name: Validate the plugin
+        run: claude plugin validate .
+
+      - name: Run the tests
+        run: claude plugin test .
