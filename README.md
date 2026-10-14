@@ -52,7 +52,11 @@ When Claude builds a feature or fixes a bug, it tests the change with Playwright
   <img src="docs/breakpoints.jpg" alt="The Tern homepage at desktop, tablet and phone sizes shown in the chat" width="49%">
 </p>
 
-Compare design concepts side by side, or check one page at desktop, tablet and phone widths in a single image.
+Whatever Claude designs, you see it right in the chat: landing pages, app screens, components, design concepts, slides, charts and generated images. Ask for a few directions and they appear side by side, then keep iterating on the one you like.
+
+- **Compare Directions:** Several concepts show together, so you can pick one at a glance instead of opening files one by one.
+- **Every Version Kept:** Each new version lands in the same player, and History lets you step back through every earlier draft.
+- **Before and After:** Switch between the old and new design, or put them side by side, to see exactly what changed.
 
 ### Video
 
@@ -69,10 +73,6 @@ Making an ad, an animation or a launch video? Each cut plays right in the chat, 
 - **Timestamps:** The sidebar walks you through what happens in the video, step by step. Each step is timestamped, so one click takes you right to that moment.
 - **Compare Versions:** When Claude makes a new version of a video, it opens in the same player. You can flip between drafts in History or play the old and new versions side by side, in sync.
 - **Quick Functions:** Open the video in QuickTime Player for a bigger view, or save it straight to your Downloads folder in one click.
-
-## How it works
-
-Pictures and videos go straight to your terminal, never to Claude, so showing them uses no tokens.
 
 ## Terminals
 
