@@ -961,18 +961,20 @@ export function expiredPrompt(shown: Shown): string {
 function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
   return NoticeBox(ui, $, width, {
     title: 'This preview has expired',
-    text: `"${shown.title}" was cleared from the preview cache, and its file is no longer there. Copy the prompt and paste it to Claude to send it again.`,
-    copy: expiredPrompt(shown), label: 'Copy prompt', action: 'copy_expired_prompt',
+    text: `Previews are cleared after a while to save space. To see "${shown.title}" again, copy the prompt and paste it to Claude.`,
+    copy: expiredPrompt(shown), label: 'Copy prompt', action: 'copy_expired_prompt', isCalm: true,
   })
 }
 
 // A failure, drawn in place of the picture: what happened, in plain words,
 // and one button that copies what to paste back (a prompt, or a command).
-export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string; link?: { href: string; then: string } }) {
+// isCalm: something that happens by design (an expired preview), drawn
+// plainly; the warning colour and ⚠ are kept for real problems.
+export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string; link?: { href: string; then: string }; isCalm?: boolean }) {
   const { Box, Text, Button, Link } = ui
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
-      <Text bold color="warning">⚠ {n.title}</Text>
+    <Box flexDirection="column" borderStyle="round" borderColor={n.isCalm ? 'subtle' : 'warning'} paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
+      {n.isCalm ? <Text bold>{n.title}</Text> : <Text bold color="warning">⚠ {n.title}</Text>}
       <Text wrap="wrap">{'\n'}{n.text}</Text>
       {n.link ? <Box marginTop={1}><Link href={n.link.href} /></Box> : null}
       {n.link ? <Text wrap="wrap">{'\n'}{n.link.then}</Text> : null}

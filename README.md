@@ -13,8 +13,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
 </p>
 
-show-your-work (claude-show-your-work) is a Claude Code plugin for previewing design iterations, watching the videos Claude makes and reviewing QA recordings, all right in Claude Code. Compare versions side by side, inspect what changed and verify a PR without opening a localhost server, digging through artifacts or switching between tools.
-
 ## Install
 
 Run these two commands in Claude Code:
