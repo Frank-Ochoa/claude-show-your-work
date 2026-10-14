@@ -205,7 +205,10 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
   if (!state.canImage || state.probed) return
   state.probed = true
   void $.clock.sleep(250).then(async () => {
-    const r = await $.ui.blit({ requestId: site, key, source: pic.src })
+    // A video playing by now shows a later frame: send that one, not the
+    // poster, or the clip jumps back to its start for a moment.
+    const shownNow = swaps.get(`${site}|${key}`)?.last
+    const r = await $.ui.blit({ requestId: site, key, source: shownNow ? await pngSource($, shownNow) : pic.src })
     if (r.deny && /alt/i.test(r.deny)) {
       state.canImage = false
       state.drawCause = causeOf(state.inTmux, state.terminalName)
@@ -221,7 +224,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
 // up behind it (playback falling further behind each frame).
 // Each draw takes a ticket; one whose frame was ready later than a newer
 // draw's is stale and skipped.
-const swaps = new Map<string, { isBusy: boolean; ticket: number; next?: { file: string; frame: number } }>()
+const swaps = new Map<string, { isBusy: boolean; ticket: number; next?: { file: string; frame: number }; last?: string }>()
 let tickets = 0
 async function blit($: EngineInterface, site: string, key: string, media: Shown, file: string, frame: number, ticket = ++tickets) {
   if (!state.canImage) return
@@ -241,6 +244,7 @@ async function blit($: EngineInterface, site: string, key: string, media: Shown,
     while (job) {
       const at = Date.now()
       await $.ui.blit({ requestId: site, key, source: await pngSource($, job.file) })
+      lane.last = job.file
       debug(`blit frame=${job.frame} ms=${Date.now() - at}`)
       job = lane.next
       lane.next = undefined

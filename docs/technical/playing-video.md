@@ -34,6 +34,7 @@ Frames are a preview copy, so they are cut with a 256-colour palette (`PALETTE`)
 - Compare plays the original and updated recordings side by side, in sync: times are mapped through the checks both sides share (`anchors`, `mapTime`).
 - Over ssh every frame crosses as bytes; expect it to be slower than local.
 - **One swap at a time per picture** (`blit`, `swaps`). A swap still in flight holds only the newest frame asked for; frames in between are dropped. Each draw takes a ticket, and a draw whose frame was ready after a newer draw's is skipped. Before this, every tick fired its own swap: on a busy machine they queued (playback fell further behind) and landed out of order (frames jumped back and forth).
+- The draw check (`probe`, once per session, 250 ms after the first draw) re-sends the frame on screen, not the poster: sending the poster jumped a playing clip back to its start for a moment.
 - The play timer never runs ahead of the frames: a tick whose next frame is still being cut waits for it.
 
 ## Timing log

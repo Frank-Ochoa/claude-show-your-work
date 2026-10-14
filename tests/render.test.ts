@@ -320,3 +320,66 @@ test('a wide window draws plain QA lines in the sidebar, never an empty one', as
   expect(tree.includes('All checks passed')).toBe(true)
   expect(tree.includes('Renders standalone')).toBe(true)
 })
+
+test('a playing video swaps its frames in order, one at a time, at its frame rate', async ($, on) => {
+  const clock = mock.clock(on)
+  on('store.get', () => ({ value: undefined }))
+  // Every frame is already cut, and each swap is recorded.
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }))
+  const swapped: number[] = []
+  on('ui.blit', (_$, e) => {
+    const file = String((e as any).source?.file ?? '')
+    const m = /f(\d+)\.png$/.exec(file)
+    if (m) swapped.push(Number(m[1]))
+    return { value: {} }
+  })
+  const clip = { ...shown, frames: { ...shown.frames, count: 30 } }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(clip)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'frames',
+    props: { tool_use_id: 'frames', tool: 'mcp__show-your-work__show_video', output, isErrored: false },
+    viewport: { columns: 140, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  await mounted.press({ key: 'play' })
+  await clock.advance(1000)
+  const played = swapped.filter((f, i) => i === 0 || f !== swapped[i - 1])
+  // About a second at 12 fps, and never a frame drawn after a later one.
+  expect(played.length).toBeGreaterThanOrEqual(10)
+  expect(played.every((f, i) => i === 0 || f > played[i - 1]!)).toBe(true)
+})
+
+test('on a slow terminal, playback drops frames instead of queueing or reordering them', async ($, on) => {
+  const clock = mock.clock(on)
+  on('store.get', () => ({ value: undefined }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }))
+  // Each swap takes 250 ms, three frames' worth at 12 fps.
+  const swapped: number[] = []
+  let inFlight = 0
+  let mostAtOnce = 0
+  on('ui.blit', async (_$, e) => {
+    const m = /f(\d+)\.png$/.exec(String((e as any).source?.file ?? ''))
+    inFlight += 1
+    mostAtOnce = Math.max(mostAtOnce, inFlight)
+    await clock.sleep(250)
+    inFlight -= 1
+    if (m) swapped.push(Number(m[1]))
+    return { value: {} }
+  })
+  const clip = { ...shown, frames: { ...shown.frames, count: 40 } }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(clip)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'slow',
+    props: { tool_use_id: 'slow', tool: 'mcp__show-your-work__show_video', output, isErrored: false },
+    viewport: { columns: 140, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  await mounted.press({ key: 'play' })
+  await clock.advance(2000)
+  const frames = swapped.filter(f => f > 1)
+  // Only one swap at a time, so about one every 250 ms, always moving forward.
+  expect(mostAtOnce).toBeLessThanOrEqual(2)
+  expect(frames.length).toBeLessThanOrEqual(10)
+  expect(frames.every((f, i) => i === 0 || f > frames[i - 1]!)).toBe(true)
+  expect(frames.at(-1)!).toBeGreaterThanOrEqual(15)
+})
