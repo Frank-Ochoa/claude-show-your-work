@@ -305,3 +305,18 @@ test('each tour stop shows its instruction once, under its title', async ($, on)
     await mounted.press({ key: 'next' })
   }
 })
+
+test('a wide window draws plain QA lines in the sidebar, never an empty one', async $ => {
+  const pic = { kind: 'image', path: '/tmp/k.png', source: '/tmp/k.png', width: 720, height: 3200, title: 'UI kit', generation: 1 }
+  const withQa = { ...pic, summary: [{ label: 'Components from live markup', ok: true }, { label: 'Renders standalone', ok: true }] }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(withQa)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'qa-wide',
+    props: { tool_use_id: 'qa-wide', tool: 'mcp__show-your-work__show_image', output, isErrored: false },
+    viewport: { columns: 200, rows: 60 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  const tree = JSON.stringify(await mounted.drawn())
+  expect(tree.includes('All checks passed')).toBe(true)
+  expect(tree.includes('Renders standalone')).toBe(true)
+})
