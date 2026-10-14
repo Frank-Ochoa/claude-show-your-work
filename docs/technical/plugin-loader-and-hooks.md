@@ -8,6 +8,7 @@ Things the Claude Code hooks loader and runtime enforce. Breaking one of the loa
 - **`$.env.get` takes a literal string.** `$.env.get(name)` with a variable is rejected so the engine can list what a module reads. Write one call per variable.
 - **`$.plugin.root` is spelled exactly like that.** `$.plugin?.root` or destructuring is rejected.
 - `$` is always used as `$.noun.event(...)` at the call site; `on` is always `on("<event>", hook)`.
+- **The entry module can import sibling modules at runtime** (`import { x } from './layout'`), including modules whose functions take `$`. `hooks.json` lists only the entry module. The rules above apply in every module. An imported `let` is read-only to the importer, so state assigned from more than one module lives in one shared object.
 
 ## Runtime behaviour
 

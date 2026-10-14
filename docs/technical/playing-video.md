@@ -33,3 +33,9 @@ Frames are a preview copy, so they are cut with a 256-colour palette (`PALETTE`)
 - Clicking a change pauses the video at that moment.
 - Compare plays the original and updated recordings side by side, in sync: times are mapped through the checks both sides share (`anchors`, `mapTime`).
 - Over ssh every frame crosses as bytes; expect it to be slower than local.
+- **One swap at a time per picture** (`blit`, `swaps`). A swap still in flight holds only the newest frame asked for; frames in between are dropped. Each draw takes a ticket, and a draw whose frame was ready after a newer draw's is skipped. Before this, every tick fired its own swap: on a busy machine they queued (playback fell further behind) and landed out of order (frames jumped back and forth).
+- The play timer never runs ahead of the frames: a tick whose next frame is still being cut waits for it.
+
+## Timing log
+
+`SHOW_YOUR_WORK_DEBUG=1` writes playback timings to `debug.log` in the temp folder, flushed once a second: `play` (fps, frame count), `tick gap=` (ms since the last tick; 83 at 12 fps), `wait` (next frame not cut yet), `cut chunk= ms=`, `blit frame= ms=`, `drop` (a frame skipped while a swap was in flight), `stale` and `redraw`. Measured on an M1: a 2 s chunk cuts in 0.2–0.4 s and a frame reads in ~1 ms, so lag is the timer firing late or the swaps, not decoding.

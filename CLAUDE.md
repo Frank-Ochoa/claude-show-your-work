@@ -11,6 +11,6 @@ Before changing an area, read its notes in `docs/technical/`:
 - `updates-and-onboarding.md`: update channels, settings, welcome and tour
 - `testing-and-debugging.md`: the test harness and its quirks, and how to check things on screen
 
-A change is done when `npx -p typescript tsc -p .`, `claude plugin validate .` and `claude plugin test .` pass, and anything visual has been looked at on screen in a normal (not background) Ghostty session. The tests can't see whether a picture draws.
+A change is done when `npx -p typescript tsc -p .`, the Biome lint (see `testing-and-debugging.md`), `claude plugin validate .` and `claude plugin test .` pass, and anything visual has been looked at on screen in a normal (not background) Ghostty session. The tests can't see whether a picture draws.
 
 When you learn something new about the engine, Ghostty or the test harness, add it to the right file in `docs/technical/`.

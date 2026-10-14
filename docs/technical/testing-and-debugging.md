@@ -4,11 +4,22 @@
 
 ```
 npx -p typescript tsc -p .
+npx --yes @biomejs/biome@1.9.4 lint hooks tests types
 claude plugin validate .
 claude plugin test .
 ```
 
 Note `npx -p typescript tsc`: a bare `npx tsc` runs an unrelated package.
+
+## Lint
+
+Biome (`biome.json`), lint only: the formatter is off so diffs stay small. The recommended rules apply, minus a few that fight the code's idioms: non-null assertions after a checked lookup, `if (!x) map.set(k, (x = ...))`, several declarations on one line, reassigning a normalised parameter, and array index keys in rows that never reorder. Tests may use `any` for engine targets. A real exception gets a `biome-ignore` comment with its reason.
+
+## CI
+
+`.github/workflows/ci.yml` runs lint, `claude plugin validate .` and `claude plugin test .` on every push to `main`, `releases` and `latest` and on pull requests. It doesn't typecheck: the engine's types (`.claude-plugin/types/`) are written by Claude Code when it loads the plugin from a folder, are git-ignored, and need a signed-in session to appear. Run `tsc` locally.
+
+`.github/workflows/release.yml` publishes a GitHub release when a `show-your-work--v*` tag is pushed, titled with the version and with the release commit's summary as its notes.
 
 ## The test harness (`claude-code/testing`)
 
