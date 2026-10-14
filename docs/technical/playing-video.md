@@ -1,12 +1,12 @@
 # Video
 
-Ghostty shows still pictures only, so a video plays as PNG frames swapped with `$.ui.blit`.
+Kitty-protocol terminals show still pictures only, so a video plays as PNG frames swapped with `$.ui.blit`.
 
 ## Frames
 
-- Sampled at up to 12 frames a second, at most `MAX_FRAMES` (900) per clip (`sampleRate`).
-- Cut at the width the player really shows (`frameWidth`), so the picture fills its box (Ghostty never enlarges).
-- A clip of known length is cut as it plays, `CHUNK` (24 frames, 2 s) at a time. The chunk on screen, the one before and the two after stay on disk; the rest are pruned. Frame 1 (the poster) always stays. A seek or a scroll back cuts the chunk again.
+- Sampled at up to 12 frames a second (`sampleRate`). A clip of known length has at most `MAX_STREAMED` (3600) frames, so up to five minutes plays at the full rate; only a few chunks are on disk at once, so a longer clip costs no more disk or memory. A clip with no duration is cut whole and stays at `MAX_FRAMES` (900). (A 24 fps option was tried and dropped: smoother, but it doubled the cutting work.)
+- Cut at the width the player really shows (`frameWidth`), so the picture fills its box (the terminal never enlarges it).
+- A clip of known length is cut as it plays, `CHUNK` (24 frames, 2 s) at a time. Around the chunk on screen, 5 s behind and 5 s ahead stay on disk (`chunksBehind`, `chunksAhead`: 3 chunks each); the rest are pruned. The ones ahead are cut in advance, two ffmpeg processes at a time (`cutAhead`, `CUT_WORKERS`: a second process got ~20–25% more done on an M1, more added little). Chunks two or more ahead are cut at a lower priority (`gently`): macOS's utility class (`taskpolicy -c utility`), which on an M1 cut as fast as normal with the machine free and gave way (3× slower) with every core busy. `nice -n 10` didn't give way at all on macOS, and the background class (`taskpolicy -b`) was 3.5× slower even when free, so playback stalled. Linux uses `nice`. The chunk needed next always runs at normal priority. Background cuts also run on one thread (`ONE_THREAD`): for 1 s of video at 2400 px that's 0.85 s of CPU and 213 MB instead of 1.3 s and 368 MB, still faster than playback. Before a video is shown, its first 5 s are cut too (`prefill`), waiting at most 4 s. Keeping only one chunk behind and one ahead made every skip cut its chunk first, a visible freeze. Frame 1 (the poster) always stays. A longer seek or a scroll back cuts the chunk again.
 - A clip with no duration (some MediaRecorder webm) is cut whole.
 - A white lead-in at the start of a recording is skipped (`whiteLead`).
 - Each clip gets a folder `v-<key>` where the key covers the file, its size and time, and the cut width, so a wider window cuts the clip again, wider.

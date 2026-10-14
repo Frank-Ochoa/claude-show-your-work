@@ -25,10 +25,10 @@ Only `register.tsx` is listed in `hooks.json`; it imports the rest. The loader's
 2. **`tool.call` hook** (`register.tsx`): finds the file (`locate`), refuses anything that isn't a picture or video, and copies it into the version history (`storeVersion`, `history.ts`), linked to the version before it.
 3. **Preparing** (`prepare`, `media.ts`): a picture becomes a PNG at the width the player needs. A video gets a poster frame and its first 2 s chunk of frames; the rest are cut as it plays. A compare file is prepared the same way, and two videos get their matching moments lined up (`anchors`).
 4. **The result** goes back to Claude as a line of text plus a marker holding the prepared item. Claude never receives the picture, so showing it costs no tokens.
-5. **`ui.render` for the `ToolResult`** (`register.tsx`): reads the marker (`shownOf`) and draws the `Viewer` (`player.tsx`). An unchanged player hands back its last drawing, so scrolling costs nothing.
+5. **`ui.render` for the `ToolResult`** (`register.tsx`): reads the marker (`shownOf`) and draws the `Viewer` (`player.tsx`). An unchanged player hands back its last drawing, and a picture scrolled back into view is only re-sent if the terminal may have dropped it.
 6. **Sizing** (`layout.ts`): the terminal's cell size in pixels comes from the tty. The player picks a box in cells for the picture's shape, and a sharper copy is made in the background if the box needs more pixels.
-7. **Drawing**: the `Image` element points Ghostty at the PNG by path, and Ghostty draws it through the kitty graphics protocol. Over ssh the bytes are sent instead.
-8. **Playback** (`player.tsx`): a timer advances one frame at a time at up to 12 fps. Each frame is swapped in with `$.ui.blit`, one swap in flight per picture with the newest frame winning. The next chunk is cut halfway through the current one, and chunks far from the playhead are pruned.
+7. **Drawing**: the `Image` element points the terminal at the PNG by path, and the terminal draws it through the kitty graphics protocol (Ghostty, kitty, WezTerm, Warp, Konsole). Over ssh the bytes are sent instead.
+8. **Playback** (`player.tsx`): a timer advances one frame at a time at up to 12 fps. Each frame is swapped in with `$.ui.blit`, one swap in flight per picture with the newest frame winning. Chunks 5 s ahead are cut in advance and 5 s behind are kept; the rest are pruned.
 
 ## Where to look
 

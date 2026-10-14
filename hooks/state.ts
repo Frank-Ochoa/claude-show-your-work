@@ -38,6 +38,8 @@ export const state = {
   // Over ssh the terminal is on another machine and can't read the file, so the
   // bytes have to cross after all.
   sendBytes: false,
+  // decoded bytes of every picture sent to the terminal so far (width x height x 4)
+  drawnBytes: 0,
   // Whether the terminal draws pictures. Some sessions cannot (a background
   // session's relay): the first blit says so, and from then on every player
   // shows a warning with the way back instead. (Coloured half-block cells were

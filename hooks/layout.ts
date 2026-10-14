@@ -8,6 +8,9 @@ import { state } from './state'
 const PANEL = '#2c2e35'
 // The QA report beside the picture, and the width the window needs for it.
 export const SIDE = 40
+// The sidebar beside the player, in fixed steps by the terminal's width:
+// QA checks are full sentences and need the room when there is room.
+export const sideFor = (columns: number) => (columns >= 210 ? 60 : columns >= 170 ? 52 : SIDE)
 // The sidebar's fill: darker than the window, so the report stands apart.
 export const SIDEBAR = '#1d1e23'
 const WIDE_ENOUGH = 110
@@ -18,23 +21,24 @@ const WIDE_ENOUGH = 110
 //   targetBox(w, h, ...)  the box a picture of that shape fills in it
 //   pixelsFor(box, cell)  the screen pixels that box needs (PX_MIN to PX_MAX)
 //   drawBox(w, h, ...)    the box drawn: the target, cut down to the picture's own pixels
-// Ghostty draws a picture at its own pixel size at most, so pictures and
+// The terminal draws a picture at its own pixel size at most, so pictures and
 // frames are made as wide as their box (frameWidth when prepared, sharpen
 // when a player needs more), and drawBox keeps a picture that's still short
 // of pixels whole instead of small in a big box.
 const PX_MIN = 320
 export const PX_MAX = 2400
 export type Room = { columns: number; rows: number; isPane: boolean; hasReport: boolean }
-export type Layout = { isWide: boolean; inner: number; maxCols: number; maxRows: number }
+export type Layout = { isWide: boolean; inner: number; maxCols: number; maxRows: number; side: number }
 export function layoutOf(room: Room): Layout {
   const isWide = room.hasReport && room.columns - 8 >= WIDE_ENOUGH
   // The window's border and padding; a pane has no row border of its own.
   const inner = room.columns - (room.isPane ? 6 : 10)
-  const space = inner - (isWide ? SIDE + 3 : 0)
+  const side = sideFor(room.columns)
+  const space = inner - (isWide ? side + 3 : 0)
   const maxCols = Math.max(1, Math.max(Math.min(space, 24), Math.min(space, room.isPane ? 220 : 120)))
   // Inline, a picture takes at most 55% of the screen's height; a pane keeps 12 rows for its controls.
   const maxRows = room.isPane ? Math.max(6, room.rows - 12) : Math.max(8, Math.min(40, Math.floor(room.rows * 0.55)))
-  return { isWide, inner, maxCols, maxRows }
+  return { isWide, inner, maxCols, maxRows, side }
 }
 export const targetBox = (width: number, height: number, layout: Layout, px: Cell | null) =>
   fit(width, height, layout.maxCols, layout.maxRows, px, false)

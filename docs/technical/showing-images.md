@@ -14,7 +14,7 @@ The picture is an `Image` element. Video playback swaps its source with `$.ui.bl
 - `recentBytes` keeps the last few base64 strings, so a redraw (any button press) doesn't read and send the picture again. Without it, buttons lag badly over ssh.
 - Do **not** switch to bytes automatically when a blit is denied with "cannot read files". That happens in background sessions too, where bytes don't draw either, and it left players stuck on their alt text.
 
-## Ghostty's limits
+## The terminal's limits (measured in Ghostty)
 
 - **Ghostty draws a picture at its native pixel size at most.** It scales a picture down to fit its box but never up. A 800 px frame in a wide box stays small. So frames and stills are made as wide as the box really is in pixels (`frameWidth`, 320 to 2400 px); stills are enlarged with `sips --resampleWidth` up to that width (`MAX_STILL` 3200).
 - **Ghostty keeps a picture at the size it was last sent.** When the box changes size but the source doesn't, the picture is cropped, not rescaled. File sources carry `generation: box.columns * 1000 + box.rows`, so a new box means a new source. Byte sources have no generation field; a crop can flash for a frame until the next redraw.
@@ -58,5 +58,13 @@ Sizes in the UI: none. The file's own size is kept as `sourceWidth`/`sourceHeigh
 The first draw is probed (`probe`): a blit 250 ms later reports whether the `Image` drew or fell back to its alt text. If it didn't, every player shows a notice (`cantDraw`) instead:
 
 - **tmux** with `allow-passthrough off`: known at session start, before any draw.
-- **A terminal other than Ghostty or kitty.**
+- **Herdr** (`TERM_PROGRAM=herdr`), a multiplexer like tmux: a failed draw there means its kitty graphics pass-through is off, or the terminal around it can't draw. The notice copies `[terminal]\nkitty_graphics = true` for Herdr's config. Older Herdr versions used `[experimental] kitty_graphics = true`.
+- **A terminal without the kitty graphics protocol.** The terminal is recognised from its environment (`terminalOf`: Ghostty, kitty, WezTerm, Warp, Konsole). In one of those, a failed draw is taken to be a background session instead (`KITTY_TERMINALS`, `causeOf`). The notice names the protocol and those terminals as equals and links to the README's terminal list; it never favours one terminal or tells someone already in a supported one to switch.
 - **A background session** (agent view, a fork, `claude attach`). These can't draw pictures at all. The notice's Copy command button copies `claude stop <id>; CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume <id>`. Resuming alone fails while the session still runs. The command itself isn't printed in the notice.
+
+## Scrolling
+
+- A player scrolled out of view gets `onScreen: null`; back in view, `onScreen` again. The terminal may have dropped the picture from its store meanwhile, so it's sent again.
+- **Back in view, the kept drawing stands** (layout unchanged); only the picture is re-sent. Rebuilding the whole player on every scroll back made scrolling past pictures slow.
+- **It's re-sent only if the terminal may have dropped it, and then at once.** A kitty-protocol terminal keeps pictures up to its image storage limit (320 MB of decoded pixels by default) and drops the oldest past it. The plugin counts the decoded bytes it has sent (`state.drawnBytes`, `noteDrawn`); a picture with less than 160 MB sent since it was drawn (half the limit) is still there and isn't sent (`mayBeDropped`). Terminals whose limit isn't known (Warp and others) get 48 MB (`safeBytes`), so they re-send sooner rather than leave a picture blank. Re-sending every picture on every pass made Ghostty decode big PNGs over and over while scrolling. A 250 ms wait for scrolling to settle was tried first and felt slow.
+- `SHOW_YOUR_WORK_DEBUG=1` logs `away`, `back` and `resend` per player.

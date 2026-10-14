@@ -5,7 +5,7 @@ import type { EngineInterface, Timer } from 'claude-code'
 import type { Check, KeyChange, Shown, Summary } from '../types'
 
 import { state } from './state'
-import { clock, drawBox, layoutOf, oneLine, pagesOf, pixelsFor, PX_MAX, remeasure, SIDE, SIDEBAR, sizeFor, tabLabel, targetBox, wrapWords } from './layout'
+import { clock, drawBox, layoutOf, oneLine, pagesOf, pixelsFor, PX_MAX, remeasure, SIDEBAR, sizeFor, tabLabel, targetBox, wrapWords } from './layout'
 import { act, debug, track } from './telemetry'
 import { compareFrame, frameFile, frameReady, identityOf, isFrameCut, isGone, keyOf, MAX_STILL, PAIR_GAP, pairReady, pngSize, prepareVideo, toOriginal, toUpdated } from './media'
 import { prepared, preparedOf } from './history'
@@ -25,11 +25,17 @@ type Player = {
   wasAway?: boolean
   // back in view: send the frame on screen again after drawing
   resend?: boolean
+  // state.drawnBytes when this player's picture was last sent
+  drawnAt?: number
   hasAutoplayed?: boolean
   // how many bar cells the scrub row last drew, so playback redraws only on a change
   segments?: number
   // which page of key changes the sidebar shows
   changesPage?: number
+  // which page of the sidebar is showing
+  sidePage?: number
+  // which failed check shows its expected and actual
+  qaOpen?: number
   // where the updated video was, kept while a still original is shown
   updatedFrame?: number
   // the picture's size in cells as last drawn, for repaints
@@ -244,6 +250,7 @@ async function blit($: EngineInterface, site: string, key: string, media: Shown,
     while (job) {
       const at = Date.now()
       await $.ui.blit({ requestId: site, key, source: await pngSource($, job.file) })
+      noteDrawn(site, media.width, media.height)
       lane.last = job.file
       debug(`blit frame=${job.frame} ms=${Date.now() - at}`)
       job = lane.next
@@ -252,6 +259,24 @@ async function blit($: EngineInterface, site: string, key: string, media: Shown,
   } finally {
     lane.isBusy = false
   }
+}
+
+// A kitty-protocol terminal keeps pictures it was sent up to its image
+// storage limit and drops the oldest past it: 320 MB of decoded pixels by
+// default in Ghostty and kitty. A picture is only re-sent on scrolling back
+// when enough has been sent since that it may have been dropped; otherwise
+// the terminal still has it and it shows at once. Half that limit, for
+// margin; a terminal whose limit isn't known (Warp and others) gets a smaller
+// budget, so it re-sends sooner rather than leave a picture blank.
+const MB = 1024 * 1024
+const safeBytes = () => (state.terminalName === 'ghostty' || state.terminalName === 'kitty' ? 160 * MB : 48 * MB)
+export function noteDrawn(site: string, width: number, height: number) {
+  state.drawnBytes += Math.max(0, width * height * 4)
+  player(site).drawnAt = state.drawnBytes
+}
+export function mayBeDropped(site: string) {
+  const at = player(site).drawnAt
+  return at === undefined || state.drawnBytes - at > safeBytes()
 }
 
 export function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
@@ -416,7 +441,7 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
   if (!Image) return <Text dimColor>This surface cannot draw images.</Text>
 
   // The picture stands alone: no wrapper, nothing laid over it and no fill
-  // behind it. Each of those kept the picture from drawing in Ghostty.
+  // behind it. Each of those kept the picture from drawing in the terminal.
   // The same file in a box of another size (a resized window) is sent again:
   // the terminal keeps a picture at the size it was last sent at.
   const source = 'file' in pic.src ? { ...pic.src, generation: box.columns * 1000 + box.rows } : pic.src
@@ -664,6 +689,78 @@ export function inClipOrder(changes: KeyChange[]): KeyChange[] {
 // card, then the PR. Text wraps; nothing is cut. Beside the player it is a
 // sidebar exactly as tall as the player, paging what doesn't fit; under it (a
 // narrow window) it spans the player's width, in two columns when there's room.
+// The QA list as rows: failures first, each with what should have happened
+// and what did; then every check under its plan step, in run order. Each
+// item knows how many rows it takes, so the list pages like the changes.
+export type QaItem =
+  | { kind: 'fail'; check: Check; n: number; lines: string[]; expected: string[]; actual: string[] }
+  | { kind: 'step'; title: string }
+  | { kind: 'check'; check: Check; n: number; lines: string[] }
+export function qaItems(checks: Check[], width: number, open = checks.findIndex(c => !c.ok)): { item: QaItem; rows: number }[] {
+  const out: { item: QaItem; rows: number }[] = []
+  const text = Math.max(8, width)
+  // Failures first, once each. Only the open one (the first, or the one
+  // clicked) shows what should have happened and what did; the rest are a
+  // line each, so the list stays short.
+  checks.forEach((check, n) => {
+    if (check.ok) return
+    const isOpen = n === open
+    const lines = wrapWords(check.name, text)
+    const expected = isOpen && check.expected ? wrapWords(`Expected ${check.expected}`, text) : []
+    const actual = isOpen && check.actual ? wrapWords(`Actually ${check.actual}`, text) : []
+    out.push({ item: { kind: 'fail', check, n, lines, expected, actual }, rows: lines.length + expected.length + actual.length })
+  })
+  // Steps in run order; checks with no step first, under no heading.
+  const steps: string[] = []
+  for (const c of checks) if (!steps.includes(c.step ?? '')) steps.push(c.step ?? '')
+  steps.sort((a, b) => (a === '' ? -1 : b === '' ? 1 : 0))
+  for (const title of steps) {
+    if (!checks.some(c => c.ok && (c.step ?? '') === title)) continue
+    if (title) out.push({ item: { kind: 'step', title }, rows: out.length ? 2 : 1 })
+    checks.forEach((check, n) => {
+      if (!check.ok || (check.step ?? '') !== title) return
+      const lines = wrapWords(check.name, text)
+      out.push({ item: { kind: 'check', check, n, lines }, rows: lines.length })
+    })
+  }
+  return out
+}
+
+// The sidebar as one list, paged as a whole: what changed, then the QA box.
+// QA items sit inside the box, whose border costs two rows on each page it
+// shows on; a heading never ends a page.
+export type SideItem =
+  | { kind: 'changes-head' }
+  | { kind: 'change'; c: KeyChange; n: number; lines: string[] }
+  | { kind: 'qa-head' }
+  | { kind: 'verdict' }
+  | QaItem
+const inBox = (kind: SideItem['kind']) => kind === 'verdict' || kind === 'fail' || kind === 'step' || kind === 'check'
+const isHeading = (kind: SideItem['kind']) => kind === 'changes-head' || kind === 'qa-head' || kind === 'step'
+export function sidePages(items: { item: SideItem; rows: number }[], room: number): SideItem[][] {
+  const pages: SideItem[][] = [[]]
+  let used = 0
+  for (const { item, rows } of items) {
+    const page = pages.at(-1)!
+    const opensBox = inBox(item.kind) && !(page.length && inBox(page.at(-1)!.kind))
+    if (page.length && used + rows + (opensBox ? 2 : 0) > room) {
+      pages.push([item])
+      used = rows + (inBox(item.kind) ? 2 : 0)
+      continue
+    }
+    page.push(item)
+    used += rows + (opensBox ? 2 : 0)
+  }
+  for (let p = 0; p < pages.length - 1; p++) {
+    const page = pages[p]!
+    while (page.length > 1 && isHeading(page.at(-1)!.kind)) pages[p + 1]!.unshift(page.pop()!)
+  }
+  return pages
+}
+
+// The QA box's border: green for a Verify pass, blue for Deep QA.
+const DEEP_BLUE = '#4c8dff'
+
 function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: Ui, at: { width: number; height?: number }) {
   const { Box, Text, Button } = ui
   const one = player(site)
@@ -672,69 +769,36 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const isBeside = height !== undefined
   const isTwo = !isBeside && width - 4 >= TWO_COLUMNS
   const column = isTwo ? Math.floor((width - 4 - 3) / 2) : width - 4
-  const TITLE = titleWidth(column), LABEL = labelWidth(column)
+  const TITLE = titleWidth(column)
   const changes = inClipOrder(shown.changes?.length ? shown.changes : shown.change ? [{ title: shown.change }] : [])
   // The summary is the updated side's; on the original, its own checks count.
-  const summary = (media === shown ? shown.summary ?? [] : []).slice(0, 3).map(s => ({ ...s, lines: wrapWords(s.label, LABEL) }))
-  const { passed, total } = qaTotals(summary, media.checks)
+  const checks = media.checks ?? []
+  const CHECK = column - 4 - 2 - 5 // the box's border and padding, "✓ ", " 0:00"
+  const summary = (media === shown ? shown.summary ?? [] : []).map(s => ({ ...s, lines: wrapWords(s.label, CHECK) }))
+  const { passed, total } = qaTotals(summary, checks)
   const allPass = total > 0 && passed === total
-  const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
-  const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink) : Number.POSITIVE_INFINITY
-  const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
-  const pages = pagesOf(wrapped.map((w, i) => ({ item: w, rows: w.lines.length + (i ? 1 : 0) })), room)
-  const page = Math.min(one.changesPage ?? 0, pages.length - 1)
+  const failed = total - passed
+  // The QA list: each check, or the headline lines when only those were given.
+  const qaList = checks.length
+    ? qaItems(checks, CHECK, one.qaOpen ?? checks.findIndex(c => !c.ok))
+    : summary.map((s, n) => ({ item: { kind: 'check' as const, check: { name: s.label, ok: s.ok }, n, lines: s.lines }, rows: s.lines.length }))
+  const hasQa = total > 0 && qaList.length > 0
+  const isDeep = shown.qa === 'deep'
+  // Beside the player the height is fixed: the whole sidebar pages, with one
+  // control at its foot. Under the player everything shows.
+  const avail = isBeside ? Math.max(6, height - 2 - (prLink ? 2 : 0) - 1) : Number.POSITIVE_INFINITY
+  const room = avail
   // Changes are timed on the updated clip; on the original, map the clock.
   const onOriginal = media !== shown
   const now = media.frames ? (onOriginal ? toUpdated(shown, one.frame / media.frames.fps) : one.frame / media.frames.fps) : -1
   const live = liveChange(changes, now, media.frames?.fps ?? 12)
-  const label = (text: string, right?: Ui) => (
-    <Box flexDirection="row" justifyContent="space-between">
-      <Text dimColor bold>{text}</Text>
+  const label = (text: string | Ui, right?: Ui) => (
+    <Box flexDirection="row" justifyContent="space-between" width={column}>
+      {typeof text === 'string' ? <Text dimColor bold>{text}</Text> : text}
       {right}
     </Box>
   )
 
-  const changed = (
-    <Box flexDirection="column" width={column}>
-      {label(
-        `${(shown.changesTitle || 'What changed').toUpperCase()} · ${changes.length}`,
-        pages.length > 1 ? (
-          <Button
-            key="changes-more"
-            plain
-            dimColor
-            label={`${page + 1}/${pages.length} ${page === pages.length - 1 ? '↑' : '↓'}`}
-            onPress={() => {
-              one.changesPage = (page + 1) % pages.length
-              redraw($, site)
-            }}
-          />
-        ) : undefined,
-      )}
-      {(pages[page] ?? []).map(({ c, n, lines }, k) => {
-        const isLive = n === live
-        // A change pauses on its moment, to be looked at; Play goes on from there.
-        const jump = () => { if (c.at === undefined) return; act('change_jump'); tourHeard($, 'change_jump'); stop($, site); seek($, site, media, onOriginal ? toOriginal(shown, c.at) : c.at, shown) }
-        return (
-          <Box key={`change-${n}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
-            <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
-            <Box flexDirection="column" width={TITLE}>
-              {lines.map((line, i) =>
-                c.at !== undefined
-                  ? <Button key={`change-${n}-${i}`} plain label={line} hover={{ inverse: true }} onPress={jump} />
-                  : <Text key={`change-${n}-${i}`}>{line}</Text>,
-              )}
-            </Box>
-            {c.at !== undefined && (
-              <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
-                {` ${clock(c.at)} `}
-              </Text>
-            )}
-          </Box>
-        )
-      })}
-    </Box>
-  )
   // The versions, newest first, each by what changed in it; the one on the
   // original side is lit, and a click puts another there.
   const history = one.isHistory ? shown.history : undefined
@@ -776,35 +840,175 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
       })}
     </Box>
   )
-  const qa = total > 0 && (
-    <Box flexDirection="column" width={column} marginTop={isTwo ? 0 : 1}>
-      {label('QA', <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>)}
-      <Box flexDirection="column" borderStyle="round" borderColor={allPass ? 'success' : 'error'} borderDimColor paddingX={1}>
-        <Text bold color={allPass ? 'success' : 'error'}>
-          {allPass ? '✓ All checks passed' : `✗ ${total - passed} of ${total} checks failed`}
-        </Text>
-        {summary.map(s => (
-          <Box key={`sum-${s.label}`} flexDirection="row" gap={1}>
-            <Text color={s.ok ? 'success' : 'error'}>{s.ok ? '✓' : '✗'}</Text>
-            <Box flexDirection="column" width={LABEL}>
-              {s.lines.map((line, i) => <Text key={`sum-${s.label}-${i}`}>{line}</Text>)}
-            </Box>
-            {s.total !== undefined && <Text dimColor>{`${s.passed ?? (s.ok ? s.total : 0)}/${s.total}`.padStart(5)}</Text>}
+  // QA checks: the failures first with expected and actual, then every check
+  // under its step. A check with a time jumps the clip there, and the one the
+  // clip has reached is lit.
+  const ownClock = media.frames ? one.frame / media.frames.fps : -1
+  const liveCheck = liveChange(checks.map(c => ({ title: c.name, at: c.at })), ownClock, media.frames?.fps ?? 12)
+  const jumpTo = (c: Check) => () => {
+    if (!c.ok) {
+      one.qaOpen = checks.indexOf(c)
+      redraw($, site)
+    }
+    if (c.at === undefined) return
+    act('check_jump')
+    stop($, site)
+    seek($, site, media, c.at, shown)
+  }
+  const time = (c: Check, n: number) =>
+    c.at !== undefined && (
+      <Text color={n === liveCheck ? 'suggestion' : undefined} dimColor={n !== liveCheck}>{clock(c.at)}</Text>
+    )
+
+  // Everything in the sidebar, in order, each with the rows it takes.
+  const all: { item: SideItem; rows: number }[] = []
+  if (changes.length) {
+    all.push({ item: { kind: 'changes-head' }, rows: 1 })
+    changes.forEach((c, n) => {
+      const lines = wrapWords(c.title, TITLE)
+      all.push({ item: { kind: 'change', c, n, lines }, rows: lines.length + (n ? 1 : 0) })
+    })
+  }
+  if (hasQa) {
+    all.push({ item: { kind: 'qa-head' }, rows: changes.length && !isTwo ? 2 : 1 })
+    // The success criteria, each as one sentence: what wasn't met first,
+    // then what was. Few by design, so they all fit.
+    if (checks.length) {
+      const order = [...checks.keys()].sort((a, b) => Number(checks[a]!.ok) - Number(checks[b]!.ok))
+      all.push({ item: { kind: 'verdict' }, rows: 1 })
+      for (const n of order) {
+        const check = checks[n]!
+        const lines = wrapWords(check.name, CHECK)
+        all.push({ item: { kind: 'check', check, n, lines }, rows: lines.length })
+      }
+    } else for (const q of qaList) all.push(q)
+  }
+  const pages = isBeside ? sidePages(all, avail) : [all.map(a => a.item)]
+  const sidePage = Math.min(one.sidePage ?? 0, pages.length - 1)
+
+  const drawOne = (it: SideItem, k: number): Ui => {
+    if (it.kind === 'changes-head') return <Box key="changes-head">{label(`${(shown.changesTitle || 'What changed').toUpperCase()} · ${changes.length}`)}</Box>
+    if (it.kind === 'change') {
+      const { c, n, lines } = it
+      const isLive = n === live
+      // A change pauses on its moment, to be looked at; Play goes on from there.
+      const jump = () => { if (c.at === undefined) return; act('change_jump'); tourHeard($, 'change_jump'); stop($, site); seek($, site, media, onOriginal ? toOriginal(shown, c.at) : c.at, shown) }
+      return (
+        <Box key={`change-${n}`} flexDirection="row" gap={1} marginTop={k ? 1 : 0}>
+          <Text color={isLive ? 'suggestion' : undefined} dimColor={!isLive}>{`${n + 1}.`.padStart(3)}</Text>
+          <Box flexDirection="column" width={TITLE}>
+            {lines.map((line, i) =>
+              c.at !== undefined
+                ? <Button key={`change-${n}-${i}`} plain label={line} hover={{ inverse: true }} onPress={jump} />
+                : <Text key={`change-${n}-${i}`}>{line}</Text>,
+            )}
           </Box>
-        ))}
+          {c.at !== undefined && (
+            <Text backgroundColor={isLive ? 'suggestion' : PILL} color={isLive ? 'inverseText' : undefined}>
+              {` ${clock(c.at)} `}
+            </Text>
+          )}
+        </Box>
+      )
+    }
+    if (it.kind === 'qa-head') return (
+      <Box key="qa-head" marginTop={k && !isTwo ? 1 : 0}>
+        {label(
+          <Text bold color={isDeep ? DEEP_BLUE : 'success'}>{isDeep ? 'DEEP QA' : 'VERIFY'}</Text>,
+          <Text bold color={allPass ? 'success' : 'error'}>{passed}/{total}</Text>,
+        )}
       </Box>
+    )
+    if (it.kind === 'verdict') return (
+      <Text key="verdict" bold color={allPass ? 'success' : 'error'}>
+        {allPass ? '✓ All checks passed' : `✗ ${failed} of ${total} checks failed`}
+      </Text>
+    )
+    if (it.kind === 'step') return <Box key={`qa-step-${it.title}`} marginTop={k ? 1 : 0}><Text dimColor>{it.title}</Text></Box>
+    const c = it.check
+    const isFail = it.kind === 'fail'
+    const name = (line: string, i: number) =>
+      c.at !== undefined || isFail
+        ? <Button key={`qa-${it.kind}-${it.n}-${i}`} plain label={line} hover={{ inverse: true }} onPress={jumpTo(c)} />
+        : <Text key={`qa-${it.kind}-${it.n}-${i}`}>{line}</Text>
+    if (it.kind === 'fail') return (
+      <Box key={`qa-fail-${it.n}`} flexDirection="column">
+        <Box flexDirection="row" gap={1}>
+          <Text color="error">✗</Text>
+          <Box flexDirection="column" width={CHECK}>{it.lines.map(name)}</Box>
+          {time(c, it.n)}
+        </Box>
+        {[...it.expected, ...it.actual].map((line, i) => {
+          const word = line.startsWith('Expected ') ? 'Expected' : line.startsWith('Actually ') ? 'Actually' : ''
+          return (
+            <Box key={`qa-ea-${it.n}-${i}`} paddingLeft={2}>
+              <Text>{word ? <Text dimColor>{word}</Text> : null}{word ? line.slice(word.length) : line}</Text>
+            </Box>
+          )
+        })}
+      </Box>
+    )
+    return (
+      <Box key={`qa-check-${it.n}`} flexDirection="row" gap={1}>
+        <Text color={c.ok ? 'success' : 'error'}>{c.ok ? '✓' : '✗'}</Text>
+        <Box flexDirection="column" width={CHECK}>{it.lines.map(name)}</Box>
+        {time(c, it.n)}
+      </Box>
+    )
+  }
+  // A run of QA items goes in the box: green for Verify, blue for Deep QA.
+  const drawList = (list: SideItem[]) => {
+    const out: Ui[] = []
+    for (let k = 0; k < list.length; ) {
+      if (!inBox(list[k]!.kind)) {
+        out.push(drawOne(list[k]!, k))
+        k++
+        continue
+      }
+      const run: Ui[] = []
+      const first = k
+      while (k < list.length && inBox(list[k]!.kind)) {
+        run.push(drawOne(list[k]!, k - first))
+        k++
+      }
+      out.push(
+        <Box key={`qa-box-${first}`} flexDirection="column" width={column} borderStyle="round" borderColor={isDeep ? DEEP_BLUE : 'success'} borderDimColor={!isDeep} paddingX={1}>
+          {run}
+        </Box>,
+      )
+    }
+    return out
+  }
+  const shownNow = pages[sidePage] ?? []
+  // One chip at the foot of the sidebar, like Claude Code's own "Jump to
+  // bottom": on to the next page, or back to the first from the last.
+  const isLastPage = sidePage === pages.length - 1
+  const chip = ` ${isLastPage ? 'Back to top ↑' : 'Scroll down ↓'} [${sidePage + 1}/${pages.length}] `
+  const turn = () => { act('side_page'); one.sidePage = (sidePage + 1) % pages.length; redraw($, site) }
+  const pager = pages.length > 1 && (
+    <Box flexDirection="row" justifyContent="center" marginTop={1}>
+      {state.canColourButtons
+        ? <Button key="side-more" plain label={chip} onPress={turn}><Text backgroundColor={PILL}>{chip}</Text></Button>
+        : <Button key="side-more" plain label={chip} onPress={turn} />}
     </Box>
   )
+  // Under a wide player, what changed and QA sit side by side.
+  const wide = isTwo && changes.length && hasQa
+  const content = wide
+    ? (
+      <Box flexDirection="row" gap={3}>
+        <Box flexDirection="column" width={column}>{drawList(shownNow.filter(i => i.kind === 'changes-head' || i.kind === 'change'))}</Box>
+        <Box flexDirection="column" width={column}>{drawList(shownNow.filter(i => i.kind !== 'changes-head' && i.kind !== 'change'))}</Box>
+      </Box>
+    )
+    : <Box flexDirection="column" width={column}>{drawList(shownNow)}</Box>
 
   return (
     <Box flexDirection="column" width={width} height={height} overflow="hidden" backgroundColor={SIDEBAR}>
-      <Box flexDirection="column" paddingX={2} paddingY={1}>
-        {versionList || (
-          <Box flexDirection="column">
-            {changes.length > 0 && (isTwo ? <Box flexDirection="row" gap={3}>{changed}{qa}</Box> : changed)}
-            {(!isTwo || !changes.length) && qa}
-          </Box>
-        )}
+      <Box flexDirection="column" paddingX={2} paddingY={1} flexGrow={1}>
+        {versionList || content}
+        {!versionList && <Box flexGrow={1} />}
+        {!versionList && pager}
         {prLink && <Box flexDirection="row" gap={1} marginTop={1}><Text dimColor>PR</Text>{prLink}</Box>}
       </Box>
     </Box>
@@ -870,12 +1074,30 @@ export const resumeCommand = (id: string) =>
 
 // Why pictures can't draw here, once a draw has failed: tmux blocking them,
 // a terminal without picture support, or a background session.
-export type DrawCause = 'tmux' | 'terminal' | 'background'
+export type DrawCause = 'tmux' | 'herdr' | 'terminal' | 'background'
+// Terminals that speak the kitty graphics protocol: a failed draw in one of
+// them is a background session, not the terminal.
+export const KITTY_TERMINALS = ['ghostty', 'kitty', 'wezterm', 'warp', 'konsole']
+// Herdr, like tmux, sits between Claude Code and the terminal: pictures get
+// through only with its kitty graphics pass-through on, to a terminal that
+// draws them.
 export const causeOf = (tmux: boolean, terminal: string): DrawCause =>
-  tmux ? 'tmux' : /^(ghostty|kitty)$/.test(terminal) ? 'background' : 'terminal'
+  tmux ? 'tmux' : terminal === 'herdr' ? 'herdr' : KITTY_TERMINALS.includes(terminal) ? 'background' : 'terminal'
+
+// Which terminal this is, from what each one sets in the environment.
+export function terminalOf(env: { program: string; term: string; kitty: boolean; konsole: boolean }): string {
+  const { program, term } = env
+  if (/ghostty/i.test(program + term)) return 'ghostty'
+  if (/kitty/i.test(term) || env.kitty) return 'kitty'
+  if (/wezterm/i.test(program)) return 'wezterm'
+  if (/warp/i.test(program)) return 'warp'
+  if (env.konsole) return 'konsole'
+  return program.toLowerCase() || 'other'
+}
 
 // The notice for a picture that couldn't draw, and the line Claude reads.
-const GHOSTTY = 'https://ghostty.org/download'
+// The README's list of terminals that draw pictures.
+const TERMINALS = 'https://github.com/iamumeransari/claude-show-your-work#terminals'
 
 export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'video', id: string) {
   const what = kind === 'video' ? 'videos' : 'pictures'
@@ -885,17 +1107,23 @@ export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'vide
     command: 'set -g allow-passthrough on', label: 'Copy setting', action: 'copy_tmux_setting',
     claude: `tmux is blocking pictures, so the person saw a notice instead of ${name}. They can add "set -g allow-passthrough on" to ~/.tmux.conf or open the chat outside tmux.`,
   }
+  if (cause === 'herdr') return {
+    title: `Herdr isn't passing ${what} through`,
+    text: `"${name}" is ready, but Herdr isn't passing ${what} on to your terminal. Add this to your Herdr config, restart Herdr, and ask Claude to show it again. The terminal around Herdr also has to support the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole.`,
+    command: '[terminal]\nkitty_graphics = true', label: 'Copy setting', action: 'copy_herdr_setting',
+    claude: `Herdr isn't passing pictures through, so the person saw a notice instead of ${name}. They can set kitty_graphics = true under [terminal] in their Herdr config and restart Herdr, in a terminal that supports the kitty graphics protocol.`,
+  }
   if (cause === 'terminal') return {
     title: "Your terminal isn't supported by show-your-work",
-    text: `"${name}" is ready, but this terminal can't draw ${what}. You need Ghostty to see them. Download it here, it's free and takes a minute:`,
+    text: `"${name}" is ready, but this terminal can't draw ${what}. show-your-work works in any terminal that supports the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole. See the full list:`,
     // biome-ignore lint/suspicious/noThenProperty: plain data, never awaited
-    link: { href: GHOSTTY, then: 'Then press Copy command and paste it in Ghostty to open this chat there.' },
+    link: { href: TERMINALS, then: 'Then press Copy command and paste it in one of them to open this chat there.' },
     command: `claude --resume${id ? ` ${id}` : ''}`, label: 'Copy command', action: 'copy_resume_command',
-    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need Ghostty to see it; it's free at ${GHOSTTY}.`,
+    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need a terminal that supports the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole (list at ${TERMINALS}).`,
   }
   return {
     title: `Can't show ${what} in a background session`,
-    text: `"${name}" is ready, but this chat is running as a background session, and those can't draw ${what} in the terminal. Press Copy command and paste it in a normal Ghostty tab to reopen it there.`,
+    text: `"${name}" is ready, but this chat is running as a background session, and those can't draw ${what} in the terminal. Press Copy command and paste it in a normal terminal tab to reopen it there.`,
     command: resumeCommand(id), label: 'Copy command', action: 'copy_resume_command',
     claude: `this chat runs as a background session, which can't draw pictures, so the person saw a notice instead of ${name}. They can resume the chat in a normal terminal tab to see it.`,
   }
@@ -984,7 +1212,11 @@ export async function Viewer(
     cellFor = size
     void $.clock.sleep(0).then(() => remeasure($)).then(isChanged => { if (isChanged) redraw($) }, () => undefined)
   }
-  const isNarrow = box.columns < 60
+  // Copy path is dropped only when the row under the picture has no room for
+  // it. The row is as wide as the controls, not the picture: a tall, thin
+  // picture still has a full row of buttons under it.
+  const actionsRow = Math.max(box.columns, Math.min(Math.max(CONTROLS_MIN, tabsWidth(shown) + 14), columns - 8))
+  const isNarrow = actionsRow < (frames ? 50 : 38)
   // Under the player the report takes at least a readable width, even beside a tall, thin picture.
   const below = hasReport && !isWide ? Math.max(box.columns, Math.min(layout.inner, 72)) : box.columns
   const checks = media.checks ?? []
@@ -1065,7 +1297,7 @@ export async function Viewer(
   )
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? Math.max(box.columns, controlsMin) + SIDE + 3 : Math.max(box.columns, controlsMin, below)) + 4}>
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={(isWide ? Math.max(box.columns, controlsMin) + layout.side + 3 : Math.max(box.columns, controlsMin, below)) + 4}>
       {TitleBar(ui, $, site, shown, { checks })}
       {!hasReport && prLink && (
         <Box flexDirection="row" gap={2}>
@@ -1075,7 +1307,7 @@ export async function Viewer(
       )}
       <Box flexDirection="row" gap={3} marginTop={1}>
         {stage}
-        {isWide && Report(ui, $, site, shown, prLink, { width: SIDE, height: box.rows + (frames ? 3 : 2) })}
+        {isWide && Report(ui, $, site, shown, prLink, { width: layout.side, height: box.rows + (frames ? 3 : 2) })}
       </Box>
       {!isWide && hasReport && <Box marginTop={1}>{Report(ui, $, site, shown, prLink, { width: below })}</Box>}
     </Box>

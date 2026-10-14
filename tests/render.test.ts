@@ -46,7 +46,7 @@ test('a narrow window shows the report under the player', async $ => {
     const mounted = await $.ui.mount(target)
     const tree = JSON.stringify(await mounted.drawn())
     expect(tree.includes('WHAT CHANGED')).toBe(true)
-    expect(tree.includes('All checks passed')).toBe(true)
+    expect(tree.includes('VERIFY')).toBe(true)
   }
 })
 
@@ -317,7 +317,7 @@ test('a wide window draws plain QA lines in the sidebar, never an empty one', as
   } as any
   const mounted = await $.ui.mount(target)
   const tree = JSON.stringify(await mounted.drawn())
-  expect(tree.includes('All checks passed')).toBe(true)
+  expect(tree.includes('VERIFY')).toBe(true)
   expect(tree.includes('Renders standalone')).toBe(true)
 })
 
@@ -382,4 +382,108 @@ test('on a slow terminal, playback drops frames instead of queueing or reorderin
   expect(frames.length).toBeLessThanOrEqual(10)
   expect(frames.every((f, i) => i === 0 || f > frames[i - 1]!)).toBe(true)
   expect(frames.at(-1)!).toBeGreaterThanOrEqual(15)
+})
+
+test('scrolling back to a picture re-sends it only if the terminal may have dropped it', async ($, on) => {
+  const clock = mock.clock(on)
+  on('store.get', () => ({ value: undefined }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }))
+  let sent = 0
+  on('ui.blit', () => {
+    sent += 1
+    return { value: {} }
+  })
+  const pic = { kind: 'image', path: '/tmp/scroll.png', source: '/tmp/scroll.png', width: 1600, height: 1000, title: 'Scroll', generation: 1 }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(pic)}`
+  const props = { tool_use_id: 'scroll', tool: 'mcp__show-your-work__show_image', output, isErrored: false }
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'scroll',
+    props, viewport: { columns: 140, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  await clock.advance(1000)
+  const before = sent
+  // Away and straight back: the terminal still has it, nothing is sent.
+  await mounted.redraw({ ...props, onScreen: null } as any)
+  await mounted.redraw({ ...props, onScreen: true } as any)
+  await clock.settle()
+  expect(sent).toBe(before)
+  // Away while plenty of other pictures were sent: sent again at once.
+  await mounted.redraw({ ...props, onScreen: null } as any)
+  // A huge picture shown meanwhile: 8000 x 8000 is 256 MB decoded.
+  const big = { ...pic, path: '/tmp/big.png', source: '/tmp/big.png', width: 8000, height: 8000, title: 'Big' }
+  await $.ui.mount({ ...target, requestId: 'big', props: { ...props, tool_use_id: 'big', output: `Shown.\nshow-your-work:${JSON.stringify(big)}` } } as any)
+  await clock.settle()
+  await mounted.redraw({ ...props, onScreen: true } as any)
+  await clock.settle()
+  expect(sent).toBe(before + 1)
+})
+
+test('the QA box lists each success criterion in full, unmet ones first, and one jumps the clip', async $ => {
+  const clip = {
+    ...shown,
+    frames: { ...shown.frames, count: 160, duration: 13.3 },
+    checks: [
+      { name: 'Choosing May 12-16 shows "4 nights" in the summary', ok: true, at: 3 },
+      { name: 'Create trip opens the new trip', ok: false, at: 9, expected: 'the new trip page', actual: 'stayed on the form' },
+    ],
+  }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(clip)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'qa-list',
+    props: { tool_use_id: 'qa-list', tool: 'mcp__show-your-work__show_video', output, isErrored: false },
+    viewport: { columns: 200, rows: 60 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  const tree = JSON.stringify(await mounted.drawn())
+  for (const text of ['VERIFY', '1 of 2 checks failed', 'Create trip', 'Choosing May']) expect(tree.includes(text)).toBe(true)
+  expect(tree.indexOf('Create trip')).toBeLessThan(tree.indexOf('Choosing May'))
+  const button = nodesOf(await mounted.drawn(), 'Button').find(b => String(b.props.label).includes('Choosing May'))
+  await mounted.press({ key: button.props.key })
+  expect(JSON.stringify(await mounted.drawn()).includes('0:03')).toBe(true)
+})
+
+test('a long run pages instead of being cut off', async $ => {
+  const checks = Array.from({ length: 30 }, (_, i) => ({ name: `Check number ${i + 1} verifies one specific thing on the page`, ok: true, at: i * 0.4 }))
+  const clip = { ...shown, frames: { ...shown.frames, count: 160, duration: 13.3 }, checks }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(clip)}`
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'qa-pages',
+    props: { tool_use_id: 'qa-pages', tool: 'mcp__show-your-work__show_video', output, isErrored: false },
+    viewport: { columns: 200, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  expect(nodesOf(await mounted.drawn(), 'Button').some(b => b.props.key === 'side-more')).toBe(true)
+})
+
+test('a deep QA run is labelled DEEP QA in a blue box, light checks VERIFY in a green one', async $ => {
+  const checks = [{ name: 'The trip opens after Create', ok: true, at: 2, step: 'Create' }]
+  const draw = async (qa: string | undefined, id: string) => {
+    const clip = { ...shown, frames: { ...shown.frames, count: 160, duration: 13.3 }, checks, ...(qa ? { qa } : {}) }
+    const target = {
+      plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: id,
+      props: { tool_use_id: id, tool: 'mcp__show-your-work__show_video', output: `Shown.\nshow-your-work:${JSON.stringify(clip)}`, isErrored: false },
+      viewport: { columns: 200, rows: 60 },
+    } as any
+    return JSON.stringify(await (await $.ui.mount(target)).drawn())
+  }
+  const deep = await draw('deep', 'qa-deep')
+  expect(deep.includes('DEEP QA')).toBe(true)
+  expect(deep.includes('"borderColor":"#4c8dff"')).toBe(true)
+  expect(deep.includes('VERIFY')).toBe(false)
+  const light = await draw(undefined, 'qa-verify')
+  expect(light.includes('VERIFY')).toBe(true)
+  expect(light.includes('#4c8dff')).toBe(false)
+})
+
+test('a tall, narrow picture still gets Copy path when the window has room', async $ => {
+  const pic = { kind: 'image', path: '/tmp/board.png', source: '/tmp/board.png', width: 1200, height: 1340, title: 'Scene board', generation: 1 }
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'tall-copy',
+    props: { tool_use_id: 'tall-copy', tool: 'mcp__show-your-work__show_image', output: `Shown.\nshow-your-work:${JSON.stringify(pic)}`, isErrored: false },
+    viewport: { columns: 140, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  const keys = nodesOf(await mounted.drawn(), 'Button').map(b => b.props.key)
+  expect(keys.includes('copy')).toBe(true)
 })

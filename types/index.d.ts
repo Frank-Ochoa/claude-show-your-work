@@ -1,7 +1,9 @@
 export type Frames = { dir: string; count: number; fps: number; duration: number; lead?: number; cut?: number }
 
-// One QA check: its name, whether it passed, and when it happens in a clip.
-export type Check = { name: string; ok: boolean; at?: number; url?: string }
+// One QA check: what was verified, as one full sentence; whether it passed;
+// when it resolved in a clip; the plan step it belongs to; and, for a
+// failure, what should have happened and what did.
+export type Check = { name: string; ok: boolean; at?: number; url?: string; step?: string; expected?: string; actual?: string; detail?: string }
 
 // One change to review: what changed, optionally when it shows in the clip and
 // the page it is on.
@@ -41,6 +43,8 @@ export type Shown = {
   // what to review, and the QA in three lines
   changes?: KeyChange[]
   summary?: Summary[]
+  // how the checks were made: light, measured checks, or a full planned run
+  qa?: 'verify' | 'deep'
   // the other side of a before/after, and the two sides' names
   compare?: Shown
   /** Earlier kept versions of the same file, oldest first; compare is the last. */

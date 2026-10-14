@@ -1,6 +1,6 @@
 # show-your-work
 
-A Claude Code plugin that draws pictures and videos in the chat (Ghostty). The code is in `hooks/`, one module per area; tests are in `tests/`.
+A Claude Code plugin that draws pictures and videos in the chat, in any terminal that supports the kitty graphics protocol (Ghostty, kitty, WezTerm, Warp, Konsole). Most testing is in Ghostty, but only about a third of users run it, so nothing may assume it. The code is in `hooks/`, one module per area; tests are in `tests/`.
 
 - `register.tsx`: the entry module (the only one in `hooks.json`): tools, commands and the hooks
 - `state.ts`: what more than one module reads or changes
@@ -16,7 +16,7 @@ Before changing an area, read its notes in `docs/technical/`:
 
 - `architecture.md`: the modules, and a tool call traced from Claude to the terminal
 - `plugin-loader-and-hooks.md`: what the hooks loader rejects, and engine behaviour that isn't obvious
-- `showing-images.md`: how pictures reach the screen, sizing, Ghostty's limits, ssh and background sessions
+- `showing-images.md`: how pictures reach the screen, sizing, the terminal's limits (measured in Ghostty), ssh and background sessions
 - `playing-video.md`: how videos become frames, chunks, the 256-colour palette
 - `cache-and-version-history.md`: temp folder, version history, size caps, cleanup
 - `updates-and-onboarding.md`: update channels, settings, welcome and tour
@@ -24,4 +24,4 @@ Before changing an area, read its notes in `docs/technical/`:
 
 A change is done when `npx -p typescript tsc -p .`, the Biome lint (see `testing-and-debugging.md`), `claude plugin validate .` and `claude plugin test .` pass, and anything visual has been looked at on screen in a normal (not background) Ghostty session. The tests can't see whether a picture draws.
 
-When you learn something new about the engine, Ghostty or the test harness, add it to the right file in `docs/technical/`.
+When you learn something new about the engine, a terminal or the test harness, add it to the right file in `docs/technical/`.

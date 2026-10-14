@@ -8,13 +8,13 @@ import type { Check, KeyChange, Overlay, Shown, Summary } from '../types'
 import { state } from './state'
 import { clock, paneSize } from './layout'
 import type { PaneProps } from './layout'
-import { flush, flushDebug, track } from './telemetry'
+import { debug, flush, flushDebug, track } from './telemetry'
 import { setUp } from './setup'
 import { CLEAN_SH, exists, expand, findPasted, identityOf, keyOf, locate, NO_FFMPEG, noticeOf, prepare, preparePair, REASONS, shiftTimes, trimFrames, VIDEO } from './media'
 import type { Notice } from './media'
 import { handleOf, MARK, noteOf, preparedOf, remember, shownById, shownOf, storeOf, storeVersion, textOf, timesThatMean, versionsOf } from './history'
 import { hadVersionBefore06, PLUGIN } from './updater'
-import { atStep, cantDraw, draw, freshCalls, NoticeBox, player, sideOf, stop, toolLine, versions, Viewer } from './player'
+import { atStep, cantDraw, draw, freshCalls, mayBeDropped, noteDrawn, NoticeBox, player, sideOf, stop, terminalOf, toolLine, versions, Viewer } from './player'
 import type { Ui } from './player'
 import { goToStop, loadSettings, Opening, openSettings, openWelcome, Settings, startBackground, startTour, Tour, TOUR_TEXT, WELCOME_TEXT } from './onboarding'
 
@@ -37,14 +37,17 @@ let pastedNames: string[] = []
 // Each failed show's notice, by tool call, for the box drawn in its place.
 const notices = new Map<string, Notice>()
 // Each window's last drawing, handed back while nothing it shows changed.
-const drawn = new Map<string, { key: string; tree: unknown }>()
+const drawn = new Map<string, { key: string; tree: unknown; view: Shown }>()
 
 const CHECKS = {
   type: 'array',
-  description: 'Checks run: { name, ok, at? (seconds), url? }',
+  description: 'Checks actually run, each measured, never eyeballed: { name (one full sentence saying what was verified, with real values), ok, at? (seconds into the video when it resolved), step? (the plan step, or "Extras"), expected? and actual? (required when ok is false: concrete values) }',
   items: {
     type: 'object',
-    properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' } },
+    properties: {
+      name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' },
+      step: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' },
+    },
     required: ['name', 'ok'],
   },
 }
@@ -61,9 +64,10 @@ const TOOL_INPUT = {
       description: 'What changed: { title, detail?, at? (seconds), url? }, in clip order',
       items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, at: { type: 'number' }, url: { type: 'string' } }, required: ['title'] },
     },
+    qa: { type: 'string', enum: ['verify', 'deep'], description: 'How the checks were made: "verify" for light measured checks (the default), "deep" for a full run following the visual-qa skill' },
     summary: {
       type: 'array',
-      description: 'QA in up to 3 lines: { label, ok, passed?, total? }',
+      description: 'Only when there are no individual checks: headline results { label, ok, passed?, total? }. Prefer `checks`.',
       items: { type: 'object', properties: { label: { type: 'string' }, ok: { type: 'boolean' }, passed: { type: 'number' }, total: { type: 'number' } }, required: ['label', 'ok'] },
     },
     checks: CHECKS,
@@ -79,9 +83,16 @@ const TOOL_INPUT = {
 }
 
 // A picture needs no timed checks, play button or custom list heading.
+// What Claude is told about QA, in both tools: every result is checked, the
+// checks are measured, never eyeballed, and light work gets light checks.
+const QA_NOTE =
+  'Do the work the person asked for; don\'t add QA work they didn\'t ask for. If you checked the result while making it, pass those few success criteria as `checks` (usually two to four, what the person needs to be true): ' +
+  'one plain sentence each saying what was met, with `ok`, and `expected` and `actual` on one that was not. Only report what you actually checked; pass no checks when you didn\'t check anything. ' +
+  'Run a full recorded QA (the visual-qa skill, with qa: "deep") only when the person asks you to test, verify or QA something, or when you are fixing a bug they reported.'
+
 const IMAGE_INPUT = {
   ...TOOL_INPUT,
-  properties: Object.fromEntries(Object.entries(TOOL_INPUT.properties).filter(([k]) => !['checks', 'compare_checks', 'changes_title'].includes(k))),
+  properties: Object.fromEntries(Object.entries(TOOL_INPUT.properties).filter(([k]) => !['changes_title'].includes(k))),
 }
 
 export const register: Register = on => {
@@ -98,7 +109,7 @@ export const register: Register = on => {
       state.pluginVersion = manifest.version ?? '0.0.0'
       const program = (await $.env.get('TERM_PROGRAM')) ?? ''
       const term = (await $.env.get('TERM')) ?? ''
-      const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
+      const terminal = terminalOf({ program, term, kitty: !!(await $.env.get('KITTY_WINDOW_ID')), konsole: !!(await $.env.get('KONSOLE_VERSION')) })
       state.terminalName = terminal
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
       state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
@@ -154,14 +165,14 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'show_image',
       description:
-        `Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\nUse it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\nWhen the image shows work you changed, also pass \`changes\` (what you changed, a few words each) and \`compare\` (an image of the same view from before the change), so the user can switch between Original, Updated and Compare. Pass \`summary\` only for checks you actually ran. When you show a new version of something you showed earlier, pass \`previous\` with its #id so both stay in the same history.\n\nThe image goes to the user's screen, not to you. Read the file yourself only if you need to check it.\n\n${SCRATCH_NOTE}`,
+        `Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\nUse it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\nWhen the image shows work you changed, also pass \`changes\` (what you changed, a few words each) and \`compare\` (an image of the same view from before the change), so the user can switch between Original, Updated and Compare. ${QA_NOTE}\n\nWhen you show a new version of something you showed earlier, pass \`previous\` with its #id so both stay in the same history.\n\nThe image goes to the user's screen, not to you. Read the file yourself only if you need to check it.\n\n${SCRATCH_NOTE}`,
       inputSchema: IMAGE_INPUT,
       isDeferred: false,
     })
     await $.tool.register({
       name: 'show_video',
       description:
-        `Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\nUse it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\nWhen the video shows work you changed, pass \`changes\`, each with \`at\` (the second it appears), and \`checks\` for what you tested, also with \`at\`. For a fix, record the same steps on the old version and pass that file as \`compare\` with its own \`compare_checks\`; the two play side by side, in sync. Pass \`summary\` only for checks you actually ran, and \`previous\` with an earlier #id when this is a new version of something you showed.\n\nKeep clips short: they are played as frames, at most 900 at up to 12 per second. You do not see the video.\n\n${SCRATCH_NOTE}`,
+        `Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\nUse it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\nWhen the video shows work you changed, pass \`changes\`, each with \`at\` (the second it appears), and \`checks\` for what you tested, also with \`at\`. For a fix, record the same steps on the old version and pass that file as \`compare\` with its own \`compare_checks\`; the two play side by side, in sync. ${QA_NOTE}\n\nPass \`previous\` with an earlier #id when this is a new version of something you showed.\n\nKeep clips short: they are played as frames, up to 12 a second, and clips over five minutes at a lower rate. You do not see the video.\n\n${SCRATCH_NOTE}`,
       inputSchema: TOOL_INPUT,
       isDeferred: false,
     })
@@ -225,6 +236,9 @@ export const register: Register = on => {
       // Drawn in the chat, in this command's own row, by the CommandOutput hook.
       const id = keyOf(`${arg}|${await $.clock.now()}`).slice(0, 10)
       shownById.set(id, shown)
+      // Saved beside the history too, so the row still draws after a reload
+      // wipes the module's memory.
+      await $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0"', `${await storeOf($)}/${id}.shown`, JSON.stringify(shown)]).catch(() => undefined)
 
       track('img_command', { kind: shown.frames ? 'video' : 'image' })
       return { text: `Showing ${shown.title}.\n${MARK}#${id}` }
@@ -238,7 +252,7 @@ export const register: Register = on => {
   on('tool.call', { tool: /^mcp__show-your-work__show_(image|video)$/ }, async ($, e) => {
     freshCalls.add(e.tool_use_id)
     const input = { ...e } as unknown as {
-      path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
+      path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; qa?: string; url?: string; checks?: Check[]
       compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; previous?: string; changes_title?: string
     }
     if (!input.path) return { deny: 'A path is needed.' }
@@ -269,6 +283,7 @@ export const register: Register = on => {
         checks: input.checks,
         changes: timesThatMean(input.changes, VIDEO.test(input.path)),
         summary: input.summary,
+        qa: input.qa === 'deep' ? 'deep' : 'verify',
         label: input.label,
         overlay: input.overlay,
         note,
@@ -363,26 +378,38 @@ export const register: Register = on => {
     if (props.onScreen === null) {
       if (one.timer) stop($, e.requestId)
       one.hasAutoplayed = true
+      if (!one.wasAway) debug(`away ${e.requestId}`)
       one.wasAway = true
     } else if (one.wasAway && props.onScreen) {
-      // Back in view: draw it fresh. The terminal may have dropped the picture
-      // and the cache its frame; the redraw decodes the frame again if needed.
+      // Back in view. The layout hasn't changed, so the kept drawing stands;
+      // only the picture is sent again, as the terminal may have dropped it.
       one.wasAway = false
-      versions.set(e.requestId, (versions.get(e.requestId) ?? 0) + 1)
       one.resend = true
+      debug(`back ${e.requestId}`)
     }
     const key = `${state.version}|${versions.get(e.requestId) ?? 0}|${e.viewport?.columns ?? 0}|${e.viewport?.rows ?? 0}`
     const kept = drawn.get(e.requestId)
-    if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
-    const shown = await shownOf($, props.output)
-    if (!shown) return next(e)
-    const view = atStep(shown, e.requestId)
-    const tree = await Viewer($, e, view, e.requestId, false, e.viewport)
-    drawn.set(e.requestId, { key, tree })
-    // As the play button does: send the frame on screen to the terminal again.
+    let tree = kept?.key === key ? (kept.tree as Awaited<ReturnType<typeof Viewer>>) : null
+    let view = kept?.view
+    if (!tree || !view) {
+      // After /reload-plugins nothing else has set up the folders yet: without
+      // this the result looks for its picture in the wrong place and collapses.
+      await setUp($)
+      const shown = await shownOf($, props.output)
+      if (!shown) return next(e)
+      view = atStep(shown, e.requestId)
+      tree = await Viewer($, e, view, e.requestId, false, e.viewport)
+      drawn.set(e.requestId, { key, tree, view })
+      if (kept?.view === undefined) noteDrawn(e.requestId, view.width, view.height)
+    }
+    // Back in view: send the picture again at once, but only if the terminal
+    // may have dropped it; otherwise it still has it and nothing is decoded.
     if (one.resend) {
       one.resend = false
-      void $.clock.sleep(120).then(() => draw($, e.requestId, sideOf(view, e.requestId), view)).catch(() => undefined)
+      if (mayBeDropped(e.requestId)) {
+        debug(`resend ${e.requestId}`)
+        draw($, e.requestId, sideOf(view, e.requestId), view)
+      }
     }
 
     return tree
@@ -425,6 +452,7 @@ export const register: Register = on => {
     const row = e.props as { command?: string; args?: string; text?: string; isErrored?: boolean; onScreen?: unknown }
     // /img: the player, in the chat under the command.
     if (row.command === 'img' && !row.isErrored && (row.text ?? '').includes(MARK)) {
+      await setUp($)
       const shown = await shownOf($, row.text ?? '')
       if (!shown) {
         // A row from before a restart: the picture is no longer at hand.

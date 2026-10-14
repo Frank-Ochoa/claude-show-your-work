@@ -1,11 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
-import { wrapWords, pagesOf, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, sizeFor, tabLabel } from '../hooks/layout'
+import { wrapWords, pagesOf, sideFor, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, sizeFor, tabLabel } from '../hooks/layout'
 import { isInstalledCopy } from '../hooks/telemetry'
 import { isAtLeast } from '../hooks/setup'
-import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
+import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, chunksBehind, chunksAhead, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
 import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
-import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
+import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, qaItems, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -36,11 +36,20 @@ test('typed and dragged-in paths resolve', () => {
   expect(expand('img/a.png', '/w/', '/Users/u')).toBe('/w/img/a.png')
 })
 
-test('long clips are sampled slower so they stay under 900 frames', () => {
+test('long clips are sampled slower so they stay under 3600 frames', () => {
   expect(sampleRate(10)).toBe(12)
-  expect(sampleRate(150)).toBe(6)
-  expect(sampleRate(5000)).toBe(1)
+  // Five minutes still plays at the full rate.
+  expect(sampleRate(300)).toBe(12)
+  expect(sampleRate(600)).toBe(6)
+  expect(sampleRate(20000)).toBe(1)
   expect(frameFile({ dir: '/t', count: 3, fps: 12, duration: 1 }, 0)).toBe('/t/f00001.png')
+})
+
+test('5 s of frames stay behind the playhead and 5 s are cut ahead', () => {
+  // A chunk is 24 frames: 5 s is 60 frames at 12 fps.
+  expect(chunksBehind(12)).toBe(3)
+  expect(chunksBehind(1)).toBe(1)
+  expect(chunksAhead(12)).toBe(3)
 })
 
 test('the picture sizes to the terminal within its limits', () => {
@@ -390,4 +399,44 @@ test('a picture short of pixels is drawn whole at its own size, never cropped or
   expect(pixelsFor({ columns: 500 }, RETINA)).toBe(2400)
   expect(pixelsFor({ columns: 5 }, RETINA)).toBe(320)
   expect(pixelsFor(target, null)).toBe(1600)
+})
+
+test('the QA list puts failures first with expected and actual, then every check under its step', () => {
+  const items = qaItems([
+    { name: 'Choosing May 12-16 shows "4 nights" in the summary', ok: true, at: 3, step: 'Pick dates' },
+    { name: 'Create trip opens the new trip', ok: false, at: 9, step: 'Create', expected: 'the new trip page to open', actual: 'stayed on the form' },
+    { name: 'No console errors during the run', ok: true, step: 'Extras' },
+  ], 40).map(i => i.item)
+  expect(items[0]!.kind).toBe('fail')
+  const fail = items[0] as Extract<(typeof items)[number], { kind: 'fail' }>
+  expect(fail.expected.join(' ')).toBe('Expected the new trip page to open')
+  expect(fail.actual.join(' ')).toBe('Actually stayed on the form')
+  // Then the steps in run order with the checks that passed; a failure shows once, at the top.
+  expect(items.slice(1).map(i => (i.kind === 'step' ? `# ${i.title}` : i.kind))).toEqual(['# Pick dates', 'check', '# Extras', 'check'])
+  // Every check shows its full sentence, wrapped to the width, never cut.
+  const name = 'Typing "maya@" shows "Enter a valid email" under the field and the Create button stays disabled'
+  expect(qaItems([{ name, ok: true }], 30)[0]!.rows).toBeGreaterThan(2)
+  expect(qaItems([{ name, ok: false }], 30)[0]!.rows).toBeGreaterThan(2)
+})
+
+test('the sidebar widens in fixed steps on wide terminals', () => {
+  expect(sideFor(120)).toBe(40)
+  expect(sideFor(169)).toBe(40)
+  expect(sideFor(170)).toBe(52)
+  expect(sideFor(209)).toBe(52)
+  expect(sideFor(210)).toBe(60)
+  expect(layoutOf({ columns: 220, rows: 50, isPane: false, hasReport: true }).side).toBe(60)
+})
+
+test('only the open failure shows its expected and actual', () => {
+  const checks = [
+    { name: 'A works', ok: false, expected: 'a', actual: 'b' },
+    { name: 'B works', ok: false, expected: 'c', actual: 'd' },
+  ]
+  const first = qaItems(checks, 40).map(i => i.item) as any[]
+  expect(first[0].expected.length).toBe(1)
+  expect(first[1].expected.length).toBe(0)
+  const second = qaItems(checks, 40, 1).map(i => i.item) as any[]
+  expect(second[0].expected.length).toBe(0)
+  expect(second[1].actual.join(' ')).toBe('Actually d')
 })

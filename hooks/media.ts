@@ -29,7 +29,11 @@ export const CLEAN_SH = [
 ].join('\n')
 export const VIDEO = /\.(mp4|mov|m4v|webm|mkv|avi|gif)$/i
 // Frames a clip is cut into at most, and the rate it plays at below that.
+// A clip cut whole (no known length) keeps every frame on disk at once, so it
+// stays at MAX_FRAMES. One of known length is cut as it plays and only a few
+// chunks are ever on disk, so it can run to MAX_STREAMED at the full rate.
 const MAX_FRAMES = 900
+const MAX_STREAMED = 3600
 const MAX_FPS = 12
 
 // A typed or dragged-in path: quotes, backslash-escaped spaces and ~ allowed.
@@ -61,9 +65,9 @@ export async function locate($: EngineInterface, raw: string): Promise<string> {
 
 export const frameFile = (frames: Frames, i: number) => `${frames.dir}/f${String(i + 1).padStart(5, '0')}.png`
 
-// How fast to sample a clip so it stays under MAX_FRAMES.
+// How fast to sample a clip of known length so it stays under MAX_STREAMED.
 export const sampleRate = (duration: number) =>
-  Math.max(1, Math.min(MAX_FPS, Math.floor(MAX_FRAMES / Math.max(duration, 0.1))))
+  Math.max(1, Math.min(MAX_FPS, Math.floor(MAX_STREAMED / Math.max(duration, 0.1))))
 
 // A PNG's size from its header (bytes 16 to 24), without any tool.
 export function pngDims(base64: string): { width: number; height: number } | null {
@@ -260,6 +264,7 @@ export async function prepareVideo($: EngineInterface, real: string, title: stri
       const frames = { ...meta.frames, dir }
       await $.process.run(['touch', dir]).catch(() => undefined)
       await ensureChunk($, frames, real, 0)
+      await prefill($, frames, real)
       return { kind: 'video', path: frameFile(frames, 0), source: real, width: meta.width, height: meta.height, ...own, title, generation: ++state.generation, frames }
     }
   }
@@ -274,7 +279,7 @@ export async function prepareVideo($: EngineInterface, real: string, title: stri
   const known = Number.isFinite(probed) && probed > 0
   // A clip of known length is decoded as it plays, a chunk at a time (see
   // ensureChunk); one without (MediaRecorder webm) is cut whole, as before.
-  const total = known ? Math.max(1, Math.min(MAX_FRAMES, Math.floor((probed - lead) * fps))) : 0
+  const total = known ? Math.max(1, Math.min(MAX_STREAMED, Math.floor((probed - lead) * fps))) : 0
   const made = await $.process.run([
     // The palette waits for the end of its input: only the first chunk is read.
     state.ffmpeg, '-v', 'error', ...(lead ? ['-ss', String(lead)] : []), ...(known ? ['-t', chunkSeconds(Math.min(CHUNK, total), fps)] : []), '-i', real,
@@ -291,14 +296,30 @@ export async function prepareVideo($: EngineInterface, real: string, title: stri
   const size = await pngSize($, poster)
   if (folder) await writeMeta($, dir, { frames: { count, fps, duration: frames.duration, cut, ...(lead ? { lead } : {}) }, ...size })
   void trimFrames($)
+  if (known) await prefill($, frames, real)
   return { kind: 'video', path: poster, source: real, ...size, ...own, title, generation: state.generation, frames }
 }
 
-// Frames are decoded from the clip as it plays, two seconds at a time: the
-// chunk on screen, the one before and the two after stay on disk, the rest
-// go. A frame asked for again (a seek, a window scrolled back to) is decoded
-// again. The poster, frame 1, always stays.
+// Frames are decoded from the clip as it plays, 24 at a time: the chunk on
+// screen and the ones a 5 s skip either way reaches stay on disk, the rest
+// go. A frame asked for again further away (a long seek, a window scrolled
+// back to) is decoded again. The poster, frame 1, always stays.
 const CHUNK = 24
+// Chunks with time to spare (two or more ahead of the playhead) are cut at
+// a lower priority. On macOS that's the utility class: measured on an M1, a
+// 2 s chunk cut in 1.2 s with the machine free, the same as normal, and in
+// 7 s with every core busy, giving way. nice 10 didn't give way at all on
+// macOS, and the background class took 4.7 s even on a free machine. Linux
+// uses nice, which does give way there. The chunk needed next always runs at
+// normal priority, so playback keeps moving however busy the machine is.
+const GENTLY = 'if command -v taskpolicy >/dev/null 2>&1; then exec taskpolicy -c utility "$@"; fi; if command -v nice >/dev/null 2>&1; then exec nice -n 10 "$@"; fi; exec "$@"'
+const gently = (argv: string[]) => ['sh', '-c', GENTLY, 'sh', ...argv]
+// And on one thread: ffmpeg's default spreads one cut over several cores and
+// buffers for each. Measured on an M1 for 1 s of video at 2400 px: default
+// 1.3 s of CPU and 368 MB, one thread 0.85 s and 213 MB, still faster than
+// playback. The first chunk, cut before the video shows, keeps the default
+// so it appears quickly.
+const ONE_THREAD = ['-threads', '1', '-filter_threads', '1']
 const decoding = new Map<string, Promise<void>>()
 export function exists($: EngineInterface, file: string) {
   return $.fs.stat(file).then(() => true, () => false)
@@ -321,7 +342,7 @@ const PALETTE = ',split[a][b];[a]palettegen[p];[b][p]paletteuse=dither=none'
 export const chunkSeconds = (frames: number, fps: number) => String(+((frames + 1) / fps).toFixed(3))
 const scaleFor = (cut?: number) => (cut ? `scale=${cut}:-2` : "scale='min(1600,iw)':-2") + (state.sendBytes ? PALETTE : '')
 
-function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, i: number): Promise<void> {
+function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, i: number, isUrgent = true): Promise<void> {
   const c = Math.floor(Math.max(0, Math.min(i, f.count - 1)) / CHUNK)
   const key = `${f.dir}#${c}`
   const running = decoding.get(key)
@@ -333,13 +354,14 @@ function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, 
     if (!source) return
     const cutAt = Date.now()
     await $.process.run(['mkdir', '-p', f.dir])
-    await $.process.run([
-      state.ffmpeg, '-v', 'error', '-ss', String(+((f.lead ?? 0) + first / f.fps).toFixed(3)), '-t', chunkSeconds(Math.min(CHUNK, f.count - first), f.fps), '-i', source,
+    const cutChunk = [
+      state.ffmpeg, '-v', 'error', ...ONE_THREAD, '-ss', String(+((f.lead ?? 0) + first / f.fps).toFixed(3)), '-t', chunkSeconds(Math.min(CHUNK, f.count - first), f.fps), '-i', source,
       '-vf', `fps=${f.fps},${scaleFor(f.cut)}`, '-frames:v', String(Math.min(CHUNK, f.count - first)),
-      '-start_number', String(first + 1), '-compression_level', '1', `${f.dir}/f%05d.png`,
-    ])
+      '-threads', '1', '-start_number', String(first + 1), '-compression_level', '1', `${f.dir}/f%05d.png`,
+    ]
+    await $.process.run(isUrgent ? cutChunk : gently(cutChunk))
     debug(`cut chunk=${c} ms=${Date.now() - cutAt}`)
-    await prune($, f.dir, c)
+    await prune($, f.dir, c, f.fps)
   })().then(() => { cutChunks.add(key) }, () => undefined).finally(() => decoding.delete(key))
   decoding.set(key, job)
   return job
@@ -353,31 +375,78 @@ function watch(dir: string, site: string, i: number) {
   at.set(site, Math.floor(i / CHUNK))
 }
 
-// Keeps, in a frames folder, chunks c-1 to c+2 around the chunk just made
-// and around every player on that folder, and the poster.
-async function prune($: EngineInterface, dir: string, c: number) {
+// Chunks 5 s behind the playhead stay on disk and 5 s ahead are cut in
+// advance, so « 5s and 5s » land on frames that are ready, and playback has
+// room to spare when cutting runs slower than the clip.
+const BEHIND_SECONDS = 5
+const AHEAD_SECONDS = 5
+const chunksFor = (seconds: number, fps: number) => Math.max(1, Math.ceil((seconds * fps) / CHUNK))
+export const chunksBehind = (fps: number) => chunksFor(BEHIND_SECONDS, fps)
+export const chunksAhead = (fps: number) => chunksFor(AHEAD_SECONDS, fps)
+
+// Keeps, in a frames folder, the chunks a skip back or forward reaches around
+// the chunk just made and around every player on that folder, and the poster.
+async function prune($: EngineInterface, dir: string, c: number, fps: number) {
   const keep = [c, ...(watching.get(dir)?.values() ?? [])]
+  const behind = chunksBehind(fps)
+  const ahead = chunksAhead(fps) + 1
   const files = await $.fs.list(dir).catch(() => [])
   const gone = files.map(f => f.name).filter(name => {
     const m = /^f(\d+)\.png$/.exec(name)
     if (!m) return false
     const i = Number(m[1]) - 1
-    return i > 0 && !keep.some(k => i >= (k - 1) * CHUNK && i < (k + 3) * CHUNK)
+    return i > 0 && !keep.some(k => i >= (k - behind) * CHUNK && i < (k + ahead + 1) * CHUNK)
   })
   if (gone.length) {
-    for (const k of [...cutChunks]) if (k.startsWith(`${dir}#`) && !keep.some(c2 => { const j = Number(k.slice(dir.length + 1)); return j >= c2 - 1 && j <= c2 + 2 })) cutChunks.delete(k)
+    for (const k of [...cutChunks]) if (k.startsWith(`${dir}#`) && !keep.some(c2 => { const j = Number(k.slice(dir.length + 1)); return j >= c2 - behind && j <= c2 + ahead })) cutChunks.delete(k)
     await $.process.run(['rm', '-f', ...gone.map(n => `${dir}/${n}`)]).catch(() => undefined)
   }
 }
 
-// The frame a side shows, decoded if it has to be; past the middle of a
-// chunk, the next one starts decoding so playback never waits.
+// The frame a side shows, decoded if it has to be; then the chunks a 5s »
+// reaches are cut ahead, one at a time so a busy machine isn't swamped.
 export async function frameReady($: EngineInterface, media: Shown, i: number, site?: string): Promise<void> {
   const f = media.frames
   if (!f) return
   if (site) watch(f.dir, site, i)
   await ensureChunk($, f, media.source, i)
-  if (i % CHUNK >= CHUNK / 2 && i + CHUNK < f.count) void ensureChunk($, f, media.source, i + CHUNK)
+  void cutAhead($, f, media.source, i)
+}
+
+// Two cuts at once, nearest first: PNG encoding runs one frame at a time
+// in each ffmpeg, so a second process gets ~20-25% more done on an M1; a
+// third and fourth add little and crowd a busy machine.
+const CUT_WORKERS = 2
+const cuttingAhead = new Set<string>()
+async function cutAhead($: EngineInterface, f: Frames, source: string | undefined, i: number) {
+  if (cuttingAhead.has(f.dir)) return
+  cuttingAhead.add(f.dir)
+  try {
+    // The chunk after this one is needed within 2 s; the rest have time.
+    const todo: { j: number; isUrgent: boolean }[] = []
+    for (let d = 1; d <= chunksAhead(f.fps); d++) {
+      const j = i + d * CHUNK
+      if (j >= f.count) break
+      if (!cutChunks.has(chunkKey(f, j))) todo.push({ j, isUrgent: d === 1 })
+    }
+    let next = 0
+    const worker = async () => {
+      while (next < todo.length) {
+        const { j, isUrgent } = todo[next++]!
+        await ensureChunk($, f, source, j, isUrgent)
+      }
+    }
+    await Promise.all(Array.from({ length: CUT_WORKERS }, worker))
+  } finally {
+    cuttingAhead.delete(f.dir)
+  }
+}
+
+// Before a video is shown, the first 5 s ahead are cut too, so playback
+// starts with room to spare. Never more than PREFILL_MS of waiting.
+const PREFILL_MS = 4000
+async function prefill($: EngineInterface, f: Frames, source: string | undefined) {
+  await Promise.race([cutAhead($, f, source, 0), $.clock.sleep(PREFILL_MS)]).catch(() => undefined)
 }
 
 // Moments both runs share (a check by the same name), as [updated, original]
@@ -602,13 +671,14 @@ function pairChunk($: EngineInterface, pair: Frames, updated: Shown, original: S
     await $.process.run(['mkdir', '-p', `${tmp}/o`, `${tmp}/u`])
     const links = js.map((j, k) => `ln -sf "${frameFile(g, j)}" "$0/o/f${String(k + 1).padStart(5, '0')}.png"; ln -sf "${frameFile(f, first + k)}" "$0/u/f${String(k + 1).padStart(5, '0')}.png"`).join('\n')
     await $.process.run(['sh', '-c', links, tmp])
+    // Needed on screen now: normal priority.
     await $.process.run([
-      state.ffmpeg, '-v', 'error', '-framerate', String(f.fps), '-i', `${tmp}/o/f%05d.png`, '-framerate', String(f.fps), '-i', `${tmp}/u/f%05d.png`,
+      state.ffmpeg, '-v', 'error', ...ONE_THREAD, '-framerate', String(f.fps), '-i', `${tmp}/o/f%05d.png`, '-framerate', String(f.fps), '-i', `${tmp}/u/f%05d.png`,
       '-filter_complex', `[0:v]scale=-2:${pairHeightOf(updated, original)},pad=iw+${PAIR_GAP}:ih:0:0:color=${SIDEBAR.replace('#', '0x')}[a];[1:v]scale=-2:${pairHeightOf(updated, original)}[b];[a][b]hstack=inputs=2`,
-      '-frames:v', String(n), '-start_number', String(first + 1), '-compression_level', '1', `${pair.dir}/f%05d.png`,
+      '-frames:v', String(n), '-threads', '1', '-start_number', String(first + 1), '-compression_level', '1', `${pair.dir}/f%05d.png`,
     ])
     await $.process.run(['rm', '-rf', tmp])
-    await prune($, pair.dir, c)
+    await prune($, pair.dir, c, pair.fps)
   })().catch(() => undefined).finally(() => decoding.delete(key))
   decoding.set(key, job)
   return job
