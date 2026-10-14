@@ -16,6 +16,6 @@
 
 ## Welcome and tour
 
-- **Only a fresh install sees the welcome.** Any key an earlier version stored (`EARLIER_KEYS`: `installId`, `updateCheckedAt`, `consent`, `statsOff`, `updatesOff`) means an update, and the welcome is skipped (`hasUsedBefore`). Once shown, `welcomed` is stored.
+- **Every install sees the welcome and tour once**, updates included, since installs from before 0.6.2 never had one. Shown means `toured` is stored. 0.6.0–0.6.1 stored `welcomed` both when they showed the welcome (fresh install) and when they skipped it (update). An install with `welcomed` but no `toured` is shown it only if a version folder from before 0.6.0 is still in the plugin cache next to this one (`hadVersionBefore06`); otherwise it already saw it and `toured` is stored quietly. Claude Code deletes orphaned version folders after some days, so an update whose old folders are gone is taken for a 0.6 install and misses the tour rather than seeing it twice. Only a fresh install holds updates and usage counts until the welcome; an update (`welcomed`, `installId` or `updateCheckedAt` stored) starts them straight away.
 - The tour has five stops (`STOPS`), each pointing at one real control; a stop is done when the person uses it. The last stop shows the settings.
 - Tour media in `assets/` is 16:10, 1600x1000 (the trip-form recording 2400x1500). Change timings in `prepareTour` if a recording changes.

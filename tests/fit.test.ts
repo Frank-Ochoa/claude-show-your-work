@@ -157,6 +157,10 @@ test('a screen only one run shows can not pull the other out of time', () => {
 test('the QA line totals the summary', () => {
   expect(qaTotals([{ label: 'a', ok: true, passed: 4, total: 4 }, { label: 'b', ok: false, passed: 1, total: 3 }])).toEqual({ passed: 5, total: 7 })
   expect(qaTotals([], [{ name: 'x', ok: true }, { name: 'y', ok: false }])).toEqual({ passed: 1, total: 2 })
+  // Plain summary lines (label and tick, no numbers) count one each, so the QA card shows.
+  expect(qaTotals([{ label: 'a', ok: true }, { label: 'b', ok: true }, { label: 'c', ok: false }])).toEqual({ passed: 2, total: 3 })
+  expect(qaTotals([{ label: 'a', ok: true }], [{ name: 'x', ok: true }, { name: 'y', ok: false }])).toEqual({ passed: 1, total: 2 })
+  expect(qaTotals()).toEqual({ passed: 0, total: 0 })
 })
 
 test('sidebar text wraps whole words and never loses any', () => {

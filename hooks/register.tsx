@@ -465,12 +465,14 @@ function ensureChunk($: EngineInterface, f: Frames, source: string | undefined, 
     // The frame asked for, not the chunk's first: the poster outlives its chunk.
     if (await exists($, frameFile(f, Math.max(0, Math.min(i, f.count - 1))))) return
     if (!source) return
+    const cutAt = Date.now()
     await $.process.run(['mkdir', '-p', f.dir])
     await $.process.run([
       ffmpeg, '-v', 'error', '-ss', String(+((f.lead ?? 0) + first / f.fps).toFixed(3)), '-t', chunkSeconds(Math.min(CHUNK, f.count - first), f.fps), '-i', source,
       '-vf', `fps=${f.fps},${scaleFor(f.cut)}`, '-frames:v', String(Math.min(CHUNK, f.count - first)),
       '-start_number', String(first + 1), '-compression_level', '1', `${f.dir}/f%05d.png`,
     ])
+    debug(`cut chunk=${c} ms=${Date.now() - cutAt}`)
     await prune($, f.dir, c)
   })().then(() => { cutChunks.add(key) }, () => undefined).finally(() => decoding.delete(key))
   decoding.set(key, job)
@@ -1258,25 +1260,58 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
   }, () => undefined)
 }
 
-async function blit($: EngineInterface, site: string, key: string, media: Shown, file: string, frame: number) {
-  if (canImage) await $.ui.blit({ requestId: site, key, source: await pngSource($, file) })
+// One swap at a time per picture, the newest frame winning: a slow swap is
+// never overtaken by the next (frames drawn out of order) and never queues
+// up behind it (playback falling further behind each frame).
+// Each draw takes a ticket; one whose frame was ready later than a newer
+// draw's is stale and skipped.
+const swaps = new Map<string, { isBusy: boolean; ticket: number; next?: { file: string; frame: number } }>()
+let tickets = 0
+async function blit($: EngineInterface, site: string, key: string, media: Shown, file: string, frame: number, ticket = ++tickets) {
+  if (!canImage) return
+  const id = `${site}|${key}`
+  let lane = swaps.get(id)
+  if (!lane) swaps.set(id, (lane = { isBusy: false, ticket: 0 }))
+  if (ticket < lane.ticket) return void debug(`stale frame=${frame}`)
+  lane.ticket = ticket
+  if (lane.isBusy) {
+    if (lane.next) debug(`drop frame=${lane.next.frame}`)
+    lane.next = { file, frame }
+    return
+  }
+  lane.isBusy = true
+  let job: { file: string; frame: number } | undefined = { file, frame }
+  try {
+    while (job) {
+      const at = Date.now()
+      await $.ui.blit({ requestId: site, key, source: await pngSource($, job.file) })
+      debug(`blit frame=${job.frame} ms=${Date.now() - at}`)
+      job = lane.next
+      lane.next = undefined
+    }
+  } finally {
+    lane.isBusy = false
+  }
 }
 
 function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   const one = player(site)
   if (one.isSplit && shown?.pair) {
     const at = Math.min(one.frame, shown.pair.count - 1), pair = shown.pair
-    void pairReady($, shown, at, site).then(() => blit($, site, 'view-pair', shown, frameFile(pair, at), at)).catch(() => undefined)
+    const ticket = ++tickets
+    void pairReady($, shown, at, site).then(() => blit($, site, 'view-pair', shown, frameFile(pair, at), at, ticket)).catch(() => undefined)
     return
   }
   if (one.isSplit && shown?.compare) {
     const at = compareFrame(shown, one.frame), compare = shown.compare, frame = one.frame
-    void frameReady($, compare, at, site).then(() => blit($, site, 'view-a', compare, plainAt(compare, at), at)).catch(() => undefined)
-    void frameReady($, shown, frame, site).then(() => blit($, site, 'view-b', shown, plainAt(shown, frame), frame)).catch(() => undefined)
+    const ticket = ++tickets
+    void frameReady($, compare, at, site).then(() => blit($, site, 'view-a', compare, plainAt(compare, at), at, ticket)).catch(() => undefined)
+    void frameReady($, shown, frame, site).then(() => blit($, site, 'view-b', shown, plainAt(shown, frame), frame, ticket)).catch(() => undefined)
     return
   }
   const frame = one.frame
-  void frameReady($, media, frame, site).then(() => blit($, site, viewKey(site), media, plainAt(media, frame), frame)).catch(() => undefined)
+  const ticket = ++tickets
+  void frameReady($, media, frame, site).then(() => blit($, site, viewKey(site), media, plainAt(media, frame), frame, ticket)).catch(() => undefined)
 }
 
 // A side's checks in words: "4 checks fail" or "all 11 checks pass".
@@ -1331,14 +1366,18 @@ function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
   // The clock never runs ahead of the frames: a tick whose next frame is
   // still being cut waits for it, so pressing play never skips ahead.
   let isWaiting = false
+  let tickAt = Date.now()
+  debug(`play fps=${frames.fps} count=${frames.count} from=${one.frame}`)
   one.timer = $.clock.every(Math.round(1000 / frames.fps), () => {
+    debug(`tick gap=${Date.now() - tickAt} frame=${one.frame}${isWaiting ? ' waiting' : ''}`)
+    tickAt = Date.now()
     if (one.frame >= frames.count - 1) return stop($, site)
     if (isWaiting) return
     const next = one.frame + 1
     if (!shown?.pair || !one.isSplit) {
       isWaiting = true
       void frameReady($, media, next, site).finally(() => { isWaiting = false })
-      if (!isFrameCut(media, next)) return
+      if (!isFrameCut(media, next)) return void debug(`wait frame=${next}`)
       isWaiting = false
     }
     one.frame = next
@@ -1346,6 +1385,7 @@ function play($: EngineInterface, site: string, media: Shown, shown?: Shown) {
     const now = marks()
     if (now !== last) {
       last = now
+      debug('redraw')
       redraw($, site)
     }
   })
@@ -1641,6 +1681,8 @@ export function qaTotals(summary: Summary[] = [], checks: Check[] = []) {
     const passed = summary.reduce((n, s) => n + (s.passed ?? (s.ok ? s.total ?? 0 : 0)), 0)
     return { passed, total }
   }
+  // Plain lines, a label and a tick each, with no checks to count: one apiece.
+  if (!checks.length) return { passed: summary.filter(s => s.ok).length, total: summary.length }
 
   return { passed: checks.filter(c => c.ok).length, total: checks.length }
 }
@@ -1921,6 +1963,14 @@ export const resumeCommand = (id: string) =>
 export type DrawCause = 'tmux' | 'terminal' | 'background'
 let drawCause: DrawCause = 'background'
 let inTmux = false
+// SHOW_YOUR_WORK_DEBUG=1: playback timings, a line per event, in TMP/debug.log.
+let isDebug = false
+const debugLines: string[] = []
+const debug = (line: string) => { if (isDebug) debugLines.push(`${Date.now()} ${line}`) }
+async function flushDebug($: EngineInterface) {
+  if (!debugLines.length) return
+  await $.fs.write(`${TMP}/debug.log`, debugLines.slice(-20000).join('\n') + '\n').catch(() => undefined)
+}
 let terminalName = ''
 export const causeOf = (tmux: boolean, terminal: string): DrawCause =>
   tmux ? 'tmux' : /^(ghostty|kitty)$/.test(terminal) ? 'background' : 'terminal'
@@ -2390,6 +2440,10 @@ type Branch = (typeof BRANCHES)[keyof typeof BRANCHES]
 const manifestOn = (branch: string) => `https://raw.githubusercontent.com/${REPO}/${branch}/.claude-plugin/plugin.json`
 const DAY_MS = 24 * 60 * 60 * 1000
 
+// A version folder from before 0.6.0 in the plugin cache: this install was
+// used before 0.6.0's welcome, so it was updated past it without seeing it.
+export const hadVersionBefore06 = (names: string[]) => names.some(name => /^\d+\.\d+\.\d+$/.test(name) && isNewer('0.6.0', name))
+
 // 1.10.0 is newer than 1.9.3; anything after a dash is ignored.
 export function isNewer(latest: string, current: string): boolean {
   const parts = (v: string) => (v.split('-')[0] ?? '').split('.').map(n => Number(n) || 0)
@@ -2516,11 +2570,6 @@ export const paneSize = (viewport: { columns: number; rows: number } | undefined
 
 const welcome = atom({ plugin: 'show-your-work', key: 'welcome' } as const, 0)
 
-// What any earlier version stored: one of them means this is an update, not
-// a fresh install, so the welcome is skipped.
-export const EARLIER_KEYS = ['installId', 'updateCheckedAt', 'consent', 'statsOff', 'updatesOff']
-export const hasUsedBefore = (values: unknown[]) => values.some(value => value !== undefined && value !== null)
-
 // A no to usage data given before these settings (0.5.12's question, 0.5.16's command) stays a no.
 // Updates are on for everyone: fixes have to reach every install.
 export const earlierNo = (consent: unknown, statsOff: unknown, updatesOff: unknown) => {
@@ -2553,11 +2602,13 @@ async function switchSetting($: EngineInterface, field: Field, value: boolean) {
 // Updates and usage counts wait for the welcome on a first run, so a switch
 // turned off there is off before anything is sent.
 async function startBackground($: EngineInterface) {
+  if (hasStarted) return
+  hasStarted = true
   if (settings.usage_stats) await startTelemetry($, statsContext)
   await checkForUpdate($, pluginVersion, settings.stable_updates ? BRANCHES.stable : BRANCHES.latest)
 }
 
-// A fresh install: the plugin runs /show-your-work once, and its output row
+// The first run (see 'toured'): the plugin runs /show-your-work once, and its output row
 // in the chat draws the welcome. That run answers with WELCOME_TEXT, which is
 // how its row is told from the person's own /show-your-work.
 const WELCOME_TEXT = 'show-your-work is installed and ready.'
@@ -2574,10 +2625,11 @@ async function openSettings($: EngineInterface) {
 }
 
 let isWelcomed = false
+let hasStarted = false
 async function finishWelcome($: EngineInterface) {
   if (isWelcomed) return
   isWelcomed = true
-  await $.store.set('welcomed', true)
+  await $.store.set('toured', true)
   await startBackground($)
 }
 
@@ -2889,6 +2941,8 @@ export const register: Register = on => {
       const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
       terminalName = terminal
       inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
+      isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
+      if (isDebug) $.clock.every(1000, () => void flushDebug($))
       // tmux with passthrough off never lets a picture through: known before the first one.
       if (inTmux) {
         const pass = await $.process.run(['tmux', 'show', '-gv', 'allow-passthrough']).catch(() => null)
@@ -2905,14 +2959,22 @@ export const register: Register = on => {
         has_ffmpeg: await exists($, ffmpeg),
         os: isMac ? 'macos' : 'linux',
       }
-      isWelcomed = !!(await $.store.get('welcomed'))
-      // Only a fresh install sees the welcome: someone who already used the
-      // plugin has an install id, an update check or an earlier choice stored, and skips it.
-      const earlier = await Promise.all(EARLIER_KEYS.map(key => $.store.get(key)))
-      if (!isWelcomed && hasUsedBefore(earlier)) {
-        isWelcomed = true
-        await $.store.set('welcomed', true)
+      // Every install sees the welcome and tour once, an update included:
+      // installs from before 0.6.2 never had one. 0.6.0 stored 'welcomed' both
+      // when it showed the welcome and when it skipped it for an update; an
+      // older version's folder still beside this one marks the update.
+      isWelcomed = !!(await $.store.get('toured'))
+      if (!isWelcomed && await $.store.get('welcomed')) {
+        const versions = await $.fs.list($.plugin.root.replace(/\/+$/, '').replace(/\/[^/]+$/, '')).catch(() => [])
+        if (!hadVersionBefore06(versions.map(f => f.name))) {
+          isWelcomed = true
+          await $.store.set('toured', true)
+        }
       }
+      // An update keeps what it already ran: its updates and usage counts start
+      // now, and only a fresh install waits for the welcome.
+      const isUpdate = (await Promise.all(['welcomed', 'installId', 'updateCheckedAt'].map(key => $.store.get(key)))).some(value => value !== undefined && value !== null)
+      if (!isWelcomed && isUpdate) await startBackground($)
       if (isWelcomed) await startBackground($)
       else await openWelcome($)
     })().catch(() => undefined)

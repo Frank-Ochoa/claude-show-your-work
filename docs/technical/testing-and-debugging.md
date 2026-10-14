@@ -18,7 +18,7 @@ Note `npx -p typescript tsc`: a bare `npx tsc` runs an unrelated package.
 - **Hooks registered with `on(...)` in a test return `{ value }` or `{ deny }`.** Returning a bare object (like `{ deny: '...' }` meant as a result) turns into a rejection.
 - `mock.clock(on)` replaces `$.clock`; move it with `clock.advance(ms)`. Real timers don't advance it.
 - `mock.store(on, entries)` answers `$.store`. **Atoms (`atom`, `read`, `update`) are not in the store** and can't be seeded, so the pane can't be rendered with content in a test.
-- `$.session.start` can't be driven usefully: the plugin's session hook doesn't run under the harness. Test what it decides through exported functions (`hasUsedBefore`, `earlierNo`).
+- `$.session.start` can't be driven usefully: the plugin's session hook doesn't run under the harness. Test what it decides through exported functions (`earlierNo`).
 - A byte source must be a real PNG; the harness checks the header.
 - The harness can't run processes or read real files: anything that needs ffmpeg or sips is checked by hand.
 - To check a test really guards a fix, break the fix and see the test fail.

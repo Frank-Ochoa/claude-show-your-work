@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EARLIER_KEYS, earlierNo, hasUsedBefore, isNewer, isStatsBlocked, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
+import { earlierNo, hadVersionBefore06, isNewer, isStatsBlocked, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
@@ -76,19 +76,18 @@ test('a no given before 0.6.0 is kept, and only a no', () => {
   expect(earlierNo(null, undefined, undefined)).toEqual({ isStatsOff: false, isUpdatesOff: false })
 })
 
-test('only a fresh install sees the welcome, never someone updating', () => {
-  const stored = (entries: Record<string, unknown>) => EARLIER_KEYS.map(key => entries[key])
-  expect(hasUsedBefore(stored({}))).toBe(false)
-  // Any one of these, left by an earlier version, means an update.
-  for (const entries of [{ installId: 'a-b' }, { updateCheckedAt: 1 }, { consent: { stats: false, updates: false } }, { statsOff: true }, { updatesOff: false }]) {
-    expect(hasUsedBefore(stored(entries))).toBe(true)
-  }
-})
-
 test('usage data stays off under any of its opt-outs, Claude Code\'s own included', () => {
   expect(isStatsBlocked(undefined, undefined, undefined)).toBe(false)
   expect(isStatsBlocked('0', undefined, undefined)).toBe(true)
   expect(isStatsBlocked(undefined, '1', undefined)).toBe(true)
   expect(isStatsBlocked(undefined, undefined, '1')).toBe(true)
   expect(isStatsBlocked(undefined, undefined, 'true')).toBe(true)
+})
+
+test('an install used before 0.6.0 is told from one that started on 0.6', () => {
+  expect(hadVersionBefore06(['0.4.0', '0.5.16', '0.6.1'])).toBe(true)
+  expect(hadVersionBefore06(['0.5.16', '0.6.2'])).toBe(true)
+  expect(hadVersionBefore06(['0.6.0', '0.6.1', '0.6.2'])).toBe(false)
+  expect(hadVersionBefore06(['.DS_Store', 'assets', 'hooks'])).toBe(false)
+  expect(hadVersionBefore06([])).toBe(false)
 })
