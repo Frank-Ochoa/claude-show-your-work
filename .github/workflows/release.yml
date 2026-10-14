@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Create the release from the tag
         env:
@@ -20,5 +22,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           version="${TAG#show-your-work--}"
-          subject="$(git log -1 --format=%s "$TAG")"
+          # The notes are the summary of the version's own commit ("0.6.3: ..."),
+          # not of whatever commit happens to be last.
+          subject="$(git log --format=%s --grep="^${version#v}: " -1 "$TAG")"
           gh release create "$TAG" --title "$version" --notes "${subject#*: }" --verify-tag
