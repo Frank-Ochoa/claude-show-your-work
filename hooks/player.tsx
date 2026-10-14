@@ -25,6 +25,8 @@ type Player = {
   wasAway?: boolean
   // back in view: send the frame on screen again after drawing
   resend?: boolean
+  // state.drawnBytes when this player's picture was last sent
+  drawnAt?: number
   hasAutoplayed?: boolean
   // how many bar cells the scrub row last drew, so playback redraws only on a change
   segments?: number
@@ -244,6 +246,7 @@ async function blit($: EngineInterface, site: string, key: string, media: Shown,
     while (job) {
       const at = Date.now()
       await $.ui.blit({ requestId: site, key, source: await pngSource($, job.file) })
+      noteDrawn(site, media.width, media.height)
       lane.last = job.file
       debug(`blit frame=${job.frame} ms=${Date.now() - at}`)
       job = lane.next
@@ -252,6 +255,24 @@ async function blit($: EngineInterface, site: string, key: string, media: Shown,
   } finally {
     lane.isBusy = false
   }
+}
+
+// A kitty-protocol terminal keeps pictures it was sent up to its image
+// storage limit and drops the oldest past it: 320 MB of decoded pixels by
+// default in Ghostty and kitty. A picture is only re-sent on scrolling back
+// when enough has been sent since that it may have been dropped; otherwise
+// the terminal still has it and it shows at once. Half that limit, for
+// margin; a terminal whose limit isn't known (Warp and others) gets a smaller
+// budget, so it re-sends sooner rather than leave a picture blank.
+const MB = 1024 * 1024
+const safeBytes = () => (state.terminalName === 'ghostty' || state.terminalName === 'kitty' ? 160 * MB : 48 * MB)
+export function noteDrawn(site: string, width: number, height: number) {
+  state.drawnBytes += Math.max(0, width * height * 4)
+  player(site).drawnAt = state.drawnBytes
+}
+export function mayBeDropped(site: string) {
+  const at = player(site).drawnAt
+  return at === undefined || state.drawnBytes - at > safeBytes()
 }
 
 export function draw($: EngineInterface, site: string, media: Shown, shown?: Shown) {
@@ -416,7 +437,7 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
   if (!Image) return <Text dimColor>This surface cannot draw images.</Text>
 
   // The picture stands alone: no wrapper, nothing laid over it and no fill
-  // behind it. Each of those kept the picture from drawing in Ghostty.
+  // behind it. Each of those kept the picture from drawing in the terminal.
   // The same file in a box of another size (a resized window) is sent again:
   // the terminal keeps a picture at the size it was last sent at.
   const source = 'file' in pic.src ? { ...pic.src, generation: box.columns * 1000 + box.rows } : pic.src
@@ -870,12 +891,30 @@ export const resumeCommand = (id: string) =>
 
 // Why pictures can't draw here, once a draw has failed: tmux blocking them,
 // a terminal without picture support, or a background session.
-export type DrawCause = 'tmux' | 'terminal' | 'background'
+export type DrawCause = 'tmux' | 'herdr' | 'terminal' | 'background'
+// Terminals that speak the kitty graphics protocol: a failed draw in one of
+// them is a background session, not the terminal.
+export const KITTY_TERMINALS = ['ghostty', 'kitty', 'wezterm', 'warp', 'konsole']
+// Herdr, like tmux, sits between Claude Code and the terminal: pictures get
+// through only with its kitty graphics pass-through on, to a terminal that
+// draws them.
 export const causeOf = (tmux: boolean, terminal: string): DrawCause =>
-  tmux ? 'tmux' : /^(ghostty|kitty)$/.test(terminal) ? 'background' : 'terminal'
+  tmux ? 'tmux' : terminal === 'herdr' ? 'herdr' : KITTY_TERMINALS.includes(terminal) ? 'background' : 'terminal'
+
+// Which terminal this is, from what each one sets in the environment.
+export function terminalOf(env: { program: string; term: string; kitty: boolean; konsole: boolean }): string {
+  const { program, term } = env
+  if (/ghostty/i.test(program + term)) return 'ghostty'
+  if (/kitty/i.test(term) || env.kitty) return 'kitty'
+  if (/wezterm/i.test(program)) return 'wezterm'
+  if (/warp/i.test(program)) return 'warp'
+  if (env.konsole) return 'konsole'
+  return program.toLowerCase() || 'other'
+}
 
 // The notice for a picture that couldn't draw, and the line Claude reads.
-const GHOSTTY = 'https://ghostty.org/download'
+// The README's list of terminals that draw pictures.
+const TERMINALS = 'https://github.com/iamumeransari/claude-show-your-work#terminals'
 
 export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'video', id: string) {
   const what = kind === 'video' ? 'videos' : 'pictures'
@@ -885,17 +924,23 @@ export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'vide
     command: 'set -g allow-passthrough on', label: 'Copy setting', action: 'copy_tmux_setting',
     claude: `tmux is blocking pictures, so the person saw a notice instead of ${name}. They can add "set -g allow-passthrough on" to ~/.tmux.conf or open the chat outside tmux.`,
   }
+  if (cause === 'herdr') return {
+    title: `Herdr isn't passing ${what} through`,
+    text: `"${name}" is ready, but Herdr isn't passing ${what} on to your terminal. Add this to your Herdr config, restart Herdr, and ask Claude to show it again. The terminal around Herdr also has to support the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole.`,
+    command: '[terminal]\nkitty_graphics = true', label: 'Copy setting', action: 'copy_herdr_setting',
+    claude: `Herdr isn't passing pictures through, so the person saw a notice instead of ${name}. They can set kitty_graphics = true under [terminal] in their Herdr config and restart Herdr, in a terminal that supports the kitty graphics protocol.`,
+  }
   if (cause === 'terminal') return {
     title: "Your terminal isn't supported by show-your-work",
-    text: `"${name}" is ready, but this terminal can't draw ${what}. You need Ghostty to see them. Download it here, it's free and takes a minute:`,
+    text: `"${name}" is ready, but this terminal can't draw ${what}. show-your-work works in any terminal that supports the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole. See the full list:`,
     // biome-ignore lint/suspicious/noThenProperty: plain data, never awaited
-    link: { href: GHOSTTY, then: 'Then press Copy command and paste it in Ghostty to open this chat there.' },
+    link: { href: TERMINALS, then: 'Then press Copy command and paste it in one of them to open this chat there.' },
     command: `claude --resume${id ? ` ${id}` : ''}`, label: 'Copy command', action: 'copy_resume_command',
-    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need Ghostty to see it; it's free at ${GHOSTTY}.`,
+    claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need a terminal that supports the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole (list at ${TERMINALS}).`,
   }
   return {
     title: `Can't show ${what} in a background session`,
-    text: `"${name}" is ready, but this chat is running as a background session, and those can't draw ${what} in the terminal. Press Copy command and paste it in a normal Ghostty tab to reopen it there.`,
+    text: `"${name}" is ready, but this chat is running as a background session, and those can't draw ${what} in the terminal. Press Copy command and paste it in a normal terminal tab to reopen it there.`,
     command: resumeCommand(id), label: 'Copy command', action: 'copy_resume_command',
     claude: `this chat runs as a background session, which can't draw pictures, so the person saw a notice instead of ${name}. They can resume the chat in a normal terminal tab to see it.`,
   }
@@ -984,7 +1029,11 @@ export async function Viewer(
     cellFor = size
     void $.clock.sleep(0).then(() => remeasure($)).then(isChanged => { if (isChanged) redraw($) }, () => undefined)
   }
-  const isNarrow = box.columns < 60
+  // Copy path is dropped only when the row under the picture has no room for
+  // it. The row is as wide as the controls, not the picture: a tall, thin
+  // picture still has a full row of buttons under it.
+  const actionsRow = Math.max(box.columns, Math.min(Math.max(CONTROLS_MIN, tabsWidth(shown) + 14), columns - 8))
+  const isNarrow = actionsRow < (frames ? 50 : 38)
   // Under the player the report takes at least a readable width, even beside a tall, thin picture.
   const below = hasReport && !isWide ? Math.max(box.columns, Math.min(layout.inner, 72)) : box.columns
   const checks = media.checks ?? []

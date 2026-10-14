@@ -383,3 +383,50 @@ test('on a slow terminal, playback drops frames instead of queueing or reorderin
   expect(frames.every((f, i) => i === 0 || f > frames[i - 1]!)).toBe(true)
   expect(frames.at(-1)!).toBeGreaterThanOrEqual(15)
 })
+
+test('scrolling back to a picture re-sends it only if the terminal may have dropped it', async ($, on) => {
+  const clock = mock.clock(on)
+  on('store.get', () => ({ value: undefined }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }))
+  let sent = 0
+  on('ui.blit', () => {
+    sent += 1
+    return { value: {} }
+  })
+  const pic = { kind: 'image', path: '/tmp/scroll.png', source: '/tmp/scroll.png', width: 1600, height: 1000, title: 'Scroll', generation: 1 }
+  const output = `Shown.\nshow-your-work:${JSON.stringify(pic)}`
+  const props = { tool_use_id: 'scroll', tool: 'mcp__show-your-work__show_image', output, isErrored: false }
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'scroll',
+    props, viewport: { columns: 140, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  await clock.advance(1000)
+  const before = sent
+  // Away and straight back: the terminal still has it, nothing is sent.
+  await mounted.redraw({ ...props, onScreen: null } as any)
+  await mounted.redraw({ ...props, onScreen: true } as any)
+  await clock.settle()
+  expect(sent).toBe(before)
+  // Away while plenty of other pictures were sent: sent again at once.
+  await mounted.redraw({ ...props, onScreen: null } as any)
+  // A huge picture shown meanwhile: 8000 x 8000 is 256 MB decoded.
+  const big = { ...pic, path: '/tmp/big.png', source: '/tmp/big.png', width: 8000, height: 8000, title: 'Big' }
+  await $.ui.mount({ ...target, requestId: 'big', props: { ...props, tool_use_id: 'big', output: `Shown.\nshow-your-work:${JSON.stringify(big)}` } } as any)
+  await clock.settle()
+  await mounted.redraw({ ...props, onScreen: true } as any)
+  await clock.settle()
+  expect(sent).toBe(before + 1)
+})
+
+test('a tall, narrow picture still gets Copy path when the window has room', async $ => {
+  const pic = { kind: 'image', path: '/tmp/board.png', source: '/tmp/board.png', width: 1200, height: 1340, title: 'Scene board', generation: 1 }
+  const target = {
+    plugin: 'show-your-work', surface: 'terminal', component: 'ToolResult', requestId: 'tall-copy',
+    props: { tool_use_id: 'tall-copy', tool: 'mcp__show-your-work__show_image', output: `Shown.\nshow-your-work:${JSON.stringify(pic)}`, isErrored: false },
+    viewport: { columns: 140, rows: 50 },
+  } as any
+  const mounted = await $.ui.mount(target)
+  const keys = nodesOf(await mounted.drawn(), 'Button').map(b => b.props.key)
+  expect(keys.includes('copy')).toBe(true)
+})

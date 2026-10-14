@@ -22,7 +22,9 @@ export function setUp($: EngineInterface): Promise<void> {
   // Each step on its own: one that fails leaves the defaults, never a throw.
   const tryRun = (argv: string[], options?: { timeoutMs: number }) => Promise.resolve().then(() => $.process.run(argv, options)).catch(() => null)
   return (state.setup ??= (async () => {
-    if (!state.cwd) state.cwd = ((await tryRun(['pwd']))?.stdout ?? '').trim()
+    // After a reload the session start doesn't run again: ask the session
+    // where it runs, so history is read from the right folder.
+    if (!state.cwd) state.cwd = (await Promise.resolve().then(() => $.session.cwd()).catch(() => '')) || ((await tryRun(['pwd']))?.stdout ?? '').trim()
     const picked = await tryRun(['sh', '-c', PICK_TMP])
     if (picked && picked.exitCode === 0 && picked.stdout.trim().startsWith('/')) state.TMP = picked.stdout.trim()
     // A login shell finds ffmpeg where the person's profile puts it; one that

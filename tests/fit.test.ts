@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { wrapWords, pagesOf, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, sizeFor, tabLabel } from '../hooks/layout'
 import { isInstalledCopy } from '../hooks/telemetry'
 import { isAtLeast } from '../hooks/setup'
-import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
+import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, chunksBehind, chunksAhead, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
 import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
 import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
 
@@ -36,11 +36,20 @@ test('typed and dragged-in paths resolve', () => {
   expect(expand('img/a.png', '/w/', '/Users/u')).toBe('/w/img/a.png')
 })
 
-test('long clips are sampled slower so they stay under 900 frames', () => {
+test('long clips are sampled slower so they stay under 3600 frames', () => {
   expect(sampleRate(10)).toBe(12)
-  expect(sampleRate(150)).toBe(6)
-  expect(sampleRate(5000)).toBe(1)
+  // Five minutes still plays at the full rate.
+  expect(sampleRate(300)).toBe(12)
+  expect(sampleRate(600)).toBe(6)
+  expect(sampleRate(20000)).toBe(1)
   expect(frameFile({ dir: '/t', count: 3, fps: 12, duration: 1 }, 0)).toBe('/t/f00001.png')
+})
+
+test('5 s of frames stay behind the playhead and 5 s are cut ahead', () => {
+  // A chunk is 24 frames: 5 s is 60 frames at 12 fps.
+  expect(chunksBehind(12)).toBe(3)
+  expect(chunksBehind(1)).toBe(1)
+  expect(chunksAhead(12)).toBe(3)
 })
 
 test('the picture sizes to the terminal within its limits', () => {

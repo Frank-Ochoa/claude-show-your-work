@@ -18,7 +18,7 @@ const WIDE_ENOUGH = 110
 //   targetBox(w, h, ...)  the box a picture of that shape fills in it
 //   pixelsFor(box, cell)  the screen pixels that box needs (PX_MIN to PX_MAX)
 //   drawBox(w, h, ...)    the box drawn: the target, cut down to the picture's own pixels
-// Ghostty draws a picture at its own pixel size at most, so pictures and
+// The terminal draws a picture at its own pixel size at most, so pictures and
 // frames are made as wide as their box (frameWidth when prepared, sharpen
 // when a player needs more), and drawBox keeps a picture that's still short
 // of pixels whole instead of small in a big box.

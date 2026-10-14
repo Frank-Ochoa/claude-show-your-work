@@ -8,13 +8,13 @@ import type { Check, KeyChange, Overlay, Shown, Summary } from '../types'
 import { state } from './state'
 import { clock, paneSize } from './layout'
 import type { PaneProps } from './layout'
-import { flush, flushDebug, track } from './telemetry'
+import { debug, flush, flushDebug, track } from './telemetry'
 import { setUp } from './setup'
 import { CLEAN_SH, exists, expand, findPasted, identityOf, keyOf, locate, NO_FFMPEG, noticeOf, prepare, preparePair, REASONS, shiftTimes, trimFrames, VIDEO } from './media'
 import type { Notice } from './media'
 import { handleOf, MARK, noteOf, preparedOf, remember, shownById, shownOf, storeOf, storeVersion, textOf, timesThatMean, versionsOf } from './history'
 import { hadVersionBefore06, PLUGIN } from './updater'
-import { atStep, cantDraw, draw, freshCalls, NoticeBox, player, sideOf, stop, toolLine, versions, Viewer } from './player'
+import { atStep, cantDraw, draw, freshCalls, mayBeDropped, noteDrawn, NoticeBox, player, sideOf, stop, terminalOf, toolLine, versions, Viewer } from './player'
 import type { Ui } from './player'
 import { goToStop, loadSettings, Opening, openSettings, openWelcome, Settings, startBackground, startTour, Tour, TOUR_TEXT, WELCOME_TEXT } from './onboarding'
 
@@ -37,14 +37,17 @@ let pastedNames: string[] = []
 // Each failed show's notice, by tool call, for the box drawn in its place.
 const notices = new Map<string, Notice>()
 // Each window's last drawing, handed back while nothing it shows changed.
-const drawn = new Map<string, { key: string; tree: unknown }>()
+const drawn = new Map<string, { key: string; tree: unknown; view: Shown }>()
 
 const CHECKS = {
   type: 'array',
-  description: 'Checks run: { name, ok, at? (seconds), url? }',
+  description: 'Checks actually run, each measured, never eyeballed: { name (one full sentence saying what was verified, with real values), ok, at? (seconds into the video when it resolved), step? (the plan step, or "Extras"), expected? and actual? (required when ok is false: concrete values) }',
   items: {
     type: 'object',
-    properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' } },
+    properties: {
+      name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' },
+      step: { type: 'string' }, expected: { type: 'string' }, actual: { type: 'string' }, detail: { type: 'string' },
+    },
     required: ['name', 'ok'],
   },
 }
@@ -98,7 +101,7 @@ export const register: Register = on => {
       state.pluginVersion = manifest.version ?? '0.0.0'
       const program = (await $.env.get('TERM_PROGRAM')) ?? ''
       const term = (await $.env.get('TERM')) ?? ''
-      const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
+      const terminal = terminalOf({ program, term, kitty: !!(await $.env.get('KITTY_WINDOW_ID')), konsole: !!(await $.env.get('KONSOLE_VERSION')) })
       state.terminalName = terminal
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
       state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
@@ -225,6 +228,9 @@ export const register: Register = on => {
       // Drawn in the chat, in this command's own row, by the CommandOutput hook.
       const id = keyOf(`${arg}|${await $.clock.now()}`).slice(0, 10)
       shownById.set(id, shown)
+      // Saved beside the history too, so the row still draws after a reload
+      // wipes the module's memory.
+      await $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0"', `${await storeOf($)}/${id}.shown`, JSON.stringify(shown)]).catch(() => undefined)
 
       track('img_command', { kind: shown.frames ? 'video' : 'image' })
       return { text: `Showing ${shown.title}.\n${MARK}#${id}` }
@@ -363,26 +369,38 @@ export const register: Register = on => {
     if (props.onScreen === null) {
       if (one.timer) stop($, e.requestId)
       one.hasAutoplayed = true
+      if (!one.wasAway) debug(`away ${e.requestId}`)
       one.wasAway = true
     } else if (one.wasAway && props.onScreen) {
-      // Back in view: draw it fresh. The terminal may have dropped the picture
-      // and the cache its frame; the redraw decodes the frame again if needed.
+      // Back in view. The layout hasn't changed, so the kept drawing stands;
+      // only the picture is sent again, as the terminal may have dropped it.
       one.wasAway = false
-      versions.set(e.requestId, (versions.get(e.requestId) ?? 0) + 1)
       one.resend = true
+      debug(`back ${e.requestId}`)
     }
     const key = `${state.version}|${versions.get(e.requestId) ?? 0}|${e.viewport?.columns ?? 0}|${e.viewport?.rows ?? 0}`
     const kept = drawn.get(e.requestId)
-    if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
-    const shown = await shownOf($, props.output)
-    if (!shown) return next(e)
-    const view = atStep(shown, e.requestId)
-    const tree = await Viewer($, e, view, e.requestId, false, e.viewport)
-    drawn.set(e.requestId, { key, tree })
-    // As the play button does: send the frame on screen to the terminal again.
+    let tree = kept?.key === key ? (kept.tree as Awaited<ReturnType<typeof Viewer>>) : null
+    let view = kept?.view
+    if (!tree || !view) {
+      // After /reload-plugins nothing else has set up the folders yet: without
+      // this the result looks for its picture in the wrong place and collapses.
+      await setUp($)
+      const shown = await shownOf($, props.output)
+      if (!shown) return next(e)
+      view = atStep(shown, e.requestId)
+      tree = await Viewer($, e, view, e.requestId, false, e.viewport)
+      drawn.set(e.requestId, { key, tree, view })
+      if (kept?.view === undefined) noteDrawn(e.requestId, view.width, view.height)
+    }
+    // Back in view: send the picture again at once, but only if the terminal
+    // may have dropped it; otherwise it still has it and nothing is decoded.
     if (one.resend) {
       one.resend = false
-      void $.clock.sleep(120).then(() => draw($, e.requestId, sideOf(view, e.requestId), view)).catch(() => undefined)
+      if (mayBeDropped(e.requestId)) {
+        debug(`resend ${e.requestId}`)
+        draw($, e.requestId, sideOf(view, e.requestId), view)
+      }
     }
 
     return tree
@@ -425,6 +443,7 @@ export const register: Register = on => {
     const row = e.props as { command?: string; args?: string; text?: string; isErrored?: boolean; onScreen?: unknown }
     // /img: the player, in the chat under the command.
     if (row.command === 'img' && !row.isErrored && (row.text ?? '').includes(MARK)) {
+      await setUp($)
       const shown = await shownOf($, row.text ?? '')
       if (!shown) {
         // A row from before a restart: the picture is no longer at hand.

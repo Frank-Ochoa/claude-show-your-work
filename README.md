@@ -4,7 +4,7 @@
 
 <h1 align="center">claude-show-your-work</h1>
 
-<p align="center">Claude Code can show you pictures and play videos in the terminal.</p>
+<p align="center">See, review and iterate on your agent's work without leaving the terminal.<br>Images, videos and visual QA for Claude Code.</p>
 
 <p align="center">
   <a href="https://github.com/iamumeransari/claude-show-your-work/stargazers"><img src="https://img.shields.io/github/stars/iamumeransari/claude-show-your-work?style=flat&logo=github&label=Stars&color=E3B341" alt="GitHub stars"></a>
@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
 </p>
 
-show-your-work (claude-show-your-work) is a Claude Code plugin that lets you view screenshots and videos in Claude Code, right in the terminal. It shows web pages, designs, charts, videos and recordings of your app being tested.
+show-your-work (claude-show-your-work) is a Claude Code plugin for previewing design iterations, watching the videos Claude makes and reviewing QA recordings, all right in Claude Code. Compare versions side by side, inspect what changed and verify a PR without opening a localhost server, digging through artifacts or switching between tools.
 
 ## Install
 
@@ -78,7 +78,7 @@ Pictures and videos go straight to your terminal, never to Claude, so showing th
 
 ## Terminals
 
-Terminals that support the kitty graphics protocol, like Ghostty and Warp, are supported, on macOS, Linux and Windows.
+show-your-work works in any terminal that supports the kitty graphics protocol, on macOS, Linux and Windows. That includes Ghostty, kitty, WezTerm, Warp and Konsole.
 
 ## FAQ
 
@@ -215,13 +215,7 @@ The plugin gives Claude two tools, `show_image` and `show_video`. A basic call n
 }
 ```
 
-Videos are cut into frames at up to 12 per second, at the width the window shows them (at most 2400 px), with a cap of 900 frames. To open a file yourself, run `/img path/to/file.png`.
-
-To turn off updates and usage counts without opening the settings, add this to `~/.claude/settings.json`:
-
-```json
-"env": { "SHOW_YOUR_WORK_AUTO_UPDATE": "0", "SHOW_YOUR_WORK_TELEMETRY": "0" }
-```
+Videos are cut into frames at up to 12 per second, at the width the window shows them (at most 2400 px), with a cap of 3,600 frames (five minutes at full rate). To open a file yourself, run `/img path/to/file.png`.
 
 To work on the plugin, edit the modules in `hooks/` (`register.tsx` is the entry) and run `/reload-plugins` to load your changes. Before sending a change, run `claude plugin validate .` and `claude plugin test .`.
 

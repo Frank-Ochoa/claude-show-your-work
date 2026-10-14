@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { isStatsBlocked, nicknameOf } from '../hooks/telemetry'
 import { noticeOf, NO_FFMPEG, noFfmpeg } from '../hooks/media'
 import { hadVersionBefore06, isNewer } from '../hooks/updater'
-import { cantDraw, causeOf } from '../hooks/player'
+import { cantDraw, causeOf, terminalOf } from '../hooks/player'
 import { earlierNo } from '../hooks/onboarding'
 
 test('a newer version is spotted, an older or equal one is not', () => {
@@ -49,12 +49,19 @@ test('a picture that cannot draw says why, and tells Claude it was not seen', ()
   expect(causeOf(true, 'ghostty')).toBe('tmux')
   expect(causeOf(false, 'ghostty')).toBe('background')
   expect(causeOf(false, 'apple_terminal')).toBe('terminal')
+  // Herdr, like tmux, gets its own setting to copy.
+  expect(causeOf(false, 'herdr')).toBe('herdr')
+  expect(cantDraw('herdr', 'a.png', 'picture', 'id1').command).toBe('[terminal]\nkitty_graphics = true')
+  // Every kitty-protocol terminal counts, not just Ghostty.
+  for (const t of ['kitty', 'wezterm', 'warp', 'konsole']) expect(causeOf(false, t)).toBe('background')
+  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').text.includes('kitty graphics protocol')).toBe(true)
+  expect(cantDraw('background', 'a.png', 'picture', 'id1').text.includes('Ghostty')).toBe(false)
   expect(cantDraw('tmux', 'a.png', 'picture', 'id1').command).toBe('set -g allow-passthrough on')
   expect(cantDraw('terminal', 'a.png', 'picture', 'id1').title).toBe("Your terminal isn't supported by show-your-work")
-  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').link?.href).toBe('https://ghostty.org/download')
-  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').claude.includes('https://ghostty.org/download')).toBe(true)
+  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').link?.href).toBe('https://github.com/iamumeransari/claude-show-your-work#terminals')
+  expect(cantDraw('terminal', 'a.png', 'picture', 'id1').claude.includes('#terminals')).toBe(true)
   expect(cantDraw('background', 'a.png', 'video', 'id1').command.includes('--resume id1')).toBe(true)
-  for (const cause of ['tmux', 'terminal', 'background'] as const) expect(cantDraw(cause, 'a.png', 'picture', '').claude.includes('saw a notice')).toBe(true)
+  for (const cause of ['tmux', 'herdr', 'terminal', 'background'] as const) expect(cantDraw(cause, 'a.png', 'picture', '').claude.includes('saw a notice')).toBe(true)
 })
 
 test('Linux gets its own ffmpeg notice, with a package manager instead of Homebrew', () => {
@@ -94,4 +101,16 @@ test('an install used before 0.6.0 is told from one that started on 0.6', () => 
   expect(hadVersionBefore06(['0.6.0', '0.6.1', '0.6.2'])).toBe(false)
   expect(hadVersionBefore06(['.DS_Store', 'assets', 'hooks'])).toBe(false)
   expect(hadVersionBefore06([])).toBe(false)
+})
+
+test('the terminal is recognised from what it sets in the environment', () => {
+  const env = (o: Partial<{ program: string; term: string; kitty: boolean; konsole: boolean }>) => ({ program: '', term: '', kitty: false, konsole: false, ...o })
+  expect(terminalOf(env({ program: 'ghostty', term: 'xterm-ghostty' }))).toBe('ghostty')
+  expect(terminalOf(env({ term: 'xterm-kitty' }))).toBe('kitty')
+  expect(terminalOf(env({ kitty: true, term: 'xterm-256color' }))).toBe('kitty')
+  expect(terminalOf(env({ program: 'WezTerm' }))).toBe('wezterm')
+  expect(terminalOf(env({ program: 'WarpTerminal' }))).toBe('warp')
+  expect(terminalOf(env({ konsole: true }))).toBe('konsole')
+  expect(terminalOf(env({ program: 'Apple_Terminal' }))).toBe('apple_terminal')
+  expect(terminalOf(env({}))).toBe('other')
 })
