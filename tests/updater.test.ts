@@ -15,7 +15,10 @@ function engine(o: { latest?: string; installed?: string; source?: string; ref?:
     env: { get: async (name: string) => o.env?.[name] },
     clock: { now: async () => 10 * 24 * 60 * 60 * 1000 },
     store: { get: async (k: string) => store.get(k), set: async (k: string, v: unknown) => void store.set(k, v) },
-    http: { fetch: async (url: string) => (fetched.push(url), { ok: true, status: 200, headers: {}, text: JSON.stringify({ version: o.latest ?? '0.6.0' }) }) },
+    http: { fetch: async (url: string) => {
+      fetched.push(url)
+      return { ok: true, status: 200, headers: {}, text: JSON.stringify({ version: o.latest ?? '0.6.0' }) }
+    } },
     ui: { toast: (t: string) => void toasts.push(t) },
     process: {
       run: async (argv: string[]) => {
@@ -26,7 +29,10 @@ function engine(o: { latest?: string; installed?: string; source?: string; ref?:
         if (args === 'plugin list --json') return { exitCode: 0, stderr: '', stdout: JSON.stringify([{ id: 'show-your-work@iamumeransari', scope: 'user', version: installed }]) }
         if (args.startsWith('plugin update')) return { exitCode: o.updateExit ?? 0, stderr: '', stdout: '' }
         if (args.startsWith('plugin marketplace add') && args.includes('#')) return { exitCode: o.addExit ?? 0, stderr: '', stdout: '' }
-        if (args.startsWith('plugin install') && installFails > 0) return (installFails -= 1), { exitCode: 1, stderr: '', stdout: '' }
+        if (args.startsWith('plugin install') && installFails > 0) {
+          installFails -= 1
+          return { exitCode: 1, stderr: '', stdout: '' }
+        }
         if (args.startsWith('plugin install')) installed = o.latest ?? '0.6.0'
         return { exitCode: 0, stderr: '', stdout: '' }
       },

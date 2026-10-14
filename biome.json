@@ -1,0 +1,45 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "files": {
+    "include": [
+      "hooks/**",
+      "tests/**",
+      "types/**"
+    ]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "organizeImports": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "off",
+        "useSingleVarDeclarator": "off",
+        "noParameterAssign": "off"
+      },
+      "suspicious": {
+        "noAssignInExpressions": "off",
+        "noArrayIndexKey": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "include": [
+        "tests/**"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
+}

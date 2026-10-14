@@ -81,7 +81,7 @@ function setUp($: EngineInterface): Promise<void> {
     const where = 'echo "home=$HOME"; echo "ff=$(command -v ffmpeg)"; echo "fp=$(command -v ffprobe)"; echo "os=$(uname -s)"'
     const run = (flag: string) => tryRun(['sh', flag, where], { timeoutMs: 5000 })
     const login = await run('-lc')
-    const env = (login && login.stdout.includes('os=') ? login : await run('-c')) ?? { stdout: '', stderr: '', exitCode: 1 }
+    const env = (login?.stdout.includes('os=') ? login : await run('-c')) ?? { stdout: '', stderr: '', exitCode: 1 }
     const got = (key: string) => env.stdout.split('\n').find(l => l.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? ''
     home = got('home') || ((await Promise.resolve().then(() => $.env.get('HOME')).catch(() => '')) ?? '')
     isMac = got('os') !== 'Linux'
@@ -100,7 +100,10 @@ function setUp($: EngineInterface): Promise<void> {
 let generation = 0
 let pastedNames: string[] = []
 // A button press, by name only. False, so it chains: act('save') || keep().
-const act = (action: string): false => (track('action', { action }), false)
+const act = (action: string): false => {
+  track('action', { action })
+  return false
+}
 
 // Playback per drawn site (a transcript row's tool_use_id, or the pane).
 type Player = {
@@ -302,7 +305,7 @@ export type Notice = { kind: NoticeKind; title: string; text: string; message: s
 // How a failure reads, from whatever the tools said; `path` is the person's own.
 export function noticeOf(err: unknown, path: string, homeDir = ''): Notice {
   const raw = String((err as Error)?.message ?? err)
-  const shown = homeDir && path.startsWith(homeDir + '/') ? '~' + path.slice(homeDir.length) : path
+  const shown = homeDir && path.startsWith(`${homeDir}/`) ? `~${path.slice(homeDir.length)}` : path
   const name = path.split('/').pop() || path
   if (raw.includes(NO_FFMPEG_LINUX)) return {
     kind: 'no_ffmpeg', title: 'This needs ffmpeg', message: NO_FFMPEG_LINUX, prompt: FFMPEG_PROMPT_LINUX,
@@ -377,7 +380,7 @@ async function prepareVideo($: EngineInterface, real: string, title: string, key
     if (!hasVideoTools) throw new Error(noFfmpeg(isMac))
   }
   const facts = await $.process.run([ffprobe, '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:format=duration', '-of', 'default=nw=1', real])
-  const field = (name: string) => Number(new RegExp(`^${name}=([0-9.]+)`, 'm').exec(facts.stdout)?.[1] ?? NaN)
+  const field = (name: string) => Number(new RegExp(`^${name}=([0-9.]+)`, 'm').exec(facts.stdout)?.[1] ?? Number.NaN)
   const cut = cutAt ?? frameWidth(field('width'), field('height'), termSize, cell)
   const own = field('width') > 0 && field('height') > 0 ? { sourceWidth: field('width'), sourceHeight: field('height') } : {}
   // A clip is cut once per width: a bigger window cuts it again, bigger.
@@ -583,7 +586,7 @@ const motion = (f: number[][]) => f.map((px, i) => (i ? px.map((v, k) => v - f[i
 // straying from it costs `drift`: two runs of the same steps keep time, so a
 // screen that looks different in one (an error the other never shows) can't
 // pull one side ahead of the other.
-export function align(a: number[][], b: number[][], hold = 0.01, band = Infinity, drift = 0): [number, number][] {
+export function align(a: number[][], b: number[][], hold = 0.01, band = Number.POSITIVE_INFINITY, drift = 0): [number, number][] {
   const n = a.length, m = b.length
   if (!n || !m) return []
   const slope = n > 1 ? (m - 1) / (n - 1) : 0
@@ -605,12 +608,12 @@ export function align(a: number[][], b: number[][], hold = 0.01, band = Infinity
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < m; j++) {
       const off = Math.abs(j - i * slope)
-      if (off > band && !(i === n - 1 && j === m - 1) && (i || j)) { cost[i * m + j] = Infinity; step[i * m + j] = 0; continue }
+      if (off > band && !(i === n - 1 && j === m - 1) && (i || j)) { cost[i * m + j] = Number.POSITIVE_INFINITY; step[i * m + j] = 0; continue }
       const d = diff(i, j) + drift * off
       if (!i && !j) { cost[0] = d; continue }
-      const both = i && j ? cost[(i - 1) * m + j - 1]! : Infinity
-      const up = i ? cost[(i - 1) * m + j]! + hold : Infinity
-      const on = j ? cost[i * m + j - 1]! + hold : Infinity
+      const both = i && j ? cost[(i - 1) * m + j - 1]! : Number.POSITIVE_INFINITY
+      const up = i ? cost[(i - 1) * m + j]! + hold : Number.POSITIVE_INFINITY
+      const on = j ? cost[i * m + j - 1]! + hold : Number.POSITIVE_INFINITY
       const best = Math.min(both, up, on)
       cost[i * m + j] = best + d
       step[i * m + j] = best === both ? 0 : best === up ? 1 : 2
@@ -666,7 +669,7 @@ async function preparePair($: EngineInterface, original: Shown, updated: Shown) 
   const f = updated.frames!, g = original.frames!
   generation += 1
   // p2: pairs made before the time-first matching are never reused.
-  const dir = `${TMP}/p2-${keyOf(f.dir + '|' + g.dir + '|' + pairHeightOf(updated, original))}`
+  const dir = `${TMP}/p2-${keyOf(`${f.dir}|${g.dir}|${pairHeightOf(updated, original)}`)}`
   type PairMeta = { pair: Omit<Frames, 'dir'>; pairWidth: number; pairHeight: number; sync: [number, number][] }
   const known = await readMeta<PairMeta>($, dir)
   if (known) {
@@ -812,7 +815,7 @@ export function oneLine(text: string, width: number): string {
   if (flat.length <= width) return flat
   const cut = flat.slice(0, width - 1)
   const space = cut.lastIndexOf(' ')
-  return (space > width / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '') + '…'
+  return `${(space > width / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`
 }
 
 // Earlier versions as given: paths or { path, note }, as an array or the
@@ -1010,7 +1013,7 @@ export const pixelsFor = (box: { columns: number; rows?: number }, px: Cell | nu
 // a cell is about twice as tall as wide.
 export function fit(width: number, height: number, maxCols: number, maxRows: number, px?: Cell | null, isCapped = true) {
   if (px) {
-    const scale = Math.min(isCapped ? 1 : Infinity, (maxCols * px.width) / width, (maxRows * px.height) / height)
+    const scale = Math.min(isCapped ? 1 : Number.POSITIVE_INFINITY, (maxCols * px.width) / width, (maxRows * px.height) / height)
     // A hair over, so a box that fits exactly (38 rows, computed as 37.999…) keeps its last row.
     const rows = Math.max(1, Math.min(255, Math.floor((height * scale) / px.height + 1e-9)))
     const shown = isCapped ? Math.min(height, rows * px.height) : rows * px.height
@@ -1444,6 +1447,8 @@ function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
   redraw($, site)
 }
 
+// The engine's UI components come untyped through $.ui.resolve.
+// biome-ignore lint/suspicious/noExplicitAny: the engine gives its UI components no types
 type Ui = any
 type Box = { columns: number; rows: number }
 
@@ -1574,7 +1579,7 @@ function viewingLabel(shown: Shown, site: string): string {
 }
 
 // A tab name short enough that every tab fits on one line and stays clickable.
-export const tabLabel = (text: string, max = 12) => (text.length > max ? text.slice(0, max - 1).trimEnd() + '…' : text)
+export const tabLabel = (text: string, max = 12) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text)
 
 // The player's zones, the same in every view:
 //   TitleBar  the title (only it gives way), the side shown, the score, a PR link, the tabs
@@ -1661,7 +1666,7 @@ function Changes(ui: Ui, $: EngineInterface, site: string, shown: Shown, fixed: 
     <Button
       key={`${word}-${c.name}`}
       plain
-      label={`${c.at !== undefined ? clock(c.at) + ' ' : ''}${word} · ${c.name}`}
+      label={`${c.at !== undefined ? `${clock(c.at)} ` : ''}${word} · ${c.name}`}
       onPress={() => { if (c.at === undefined) return; act('check_jump'); seek($, site, media, c.at, shown) }}
     />
   )
@@ -1711,7 +1716,7 @@ export function liveChange(changes: KeyChange[], now: number, fps: number): numb
 // Changes in the order they show in the clip; ones without a time keep
 // their place after the timed ones.
 export function inClipOrder(changes: KeyChange[]): KeyChange[] {
-  return changes.map((c, i) => ({ c, i })).sort((a, b) => (a.c.at ?? Infinity) - (b.c.at ?? Infinity) || a.i - b.i).map(x => x.c)
+  return changes.map((c, i) => ({ c, i })).sort((a, b) => (a.c.at ?? Number.POSITIVE_INFINITY) - (b.c.at ?? Number.POSITIVE_INFINITY) || a.i - b.i).map(x => x.c)
 }
 
 // Words wrapped to lines of at most width, so the whole text is always shown.
@@ -1724,7 +1729,7 @@ export function wrapWords(text: string, width: number): string[] {
       const piece = w.length > width ? w.slice(0, width) : w
       w = w.slice(piece.length)
       if (!line) line = piece
-      else if (line.length + 1 + piece.length <= width) line += ' ' + piece
+      else if (line.length + 1 + piece.length <= width) line += ` ${piece}`
       else {
         lines.push(line)
         line = piece
@@ -1769,7 +1774,7 @@ function Report(ui: Ui, $: EngineInterface, site: string, shown: Shown, prLink: 
   const { passed, total } = qaTotals(summary, media.checks)
   const allPass = total > 0 && passed === total
   const summaryRows = summary.reduce((n, s) => n + s.lines.length, 0)
-  const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink) : Infinity
+  const room = isBeside ? changesThatFit(height, total > 0 ? summaryRows : -1, !!prLink) : Number.POSITIVE_INFINITY
   const wrapped = changes.map((c, n) => ({ c, n, lines: wrapWords(c.title, TITLE) }))
   const pages = pagesOf(wrapped.map((w, i) => ({ item: w, rows: w.lines.length + (i ? 1 : 0) })), room)
   const page = Math.min(one.changesPage ?? 0, pages.length - 1)
@@ -1969,7 +1974,7 @@ const debugLines: string[] = []
 const debug = (line: string) => { if (isDebug) debugLines.push(`${Date.now()} ${line}`) }
 async function flushDebug($: EngineInterface) {
   if (!debugLines.length) return
-  await $.fs.write(`${TMP}/debug.log`, debugLines.slice(-20000).join('\n') + '\n').catch(() => undefined)
+  await $.fs.write(`${TMP}/debug.log`, `${debugLines.slice(-20000).join('\n')}\n`).catch(() => undefined)
 }
 let terminalName = ''
 export const causeOf = (tmux: boolean, terminal: string): DrawCause =>
@@ -1989,8 +1994,9 @@ export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'vide
   if (cause === 'terminal') return {
     title: "Your terminal isn't supported by show-your-work",
     text: `"${name}" is ready, but this terminal can't draw ${what}. You need Ghostty to see them. Download it here, it's free and takes a minute:`,
+    // biome-ignore lint/suspicious/noThenProperty: plain data, never awaited
     link: { href: GHOSTTY, then: 'Then press Copy command and paste it in Ghostty to open this chat there.' },
-    command: `claude --resume${id ? ' ' + id : ''}`, label: 'Copy command', action: 'copy_resume_command',
+    command: `claude --resume${id ? ` ${id}` : ''}`, label: 'Copy command', action: 'copy_resume_command',
     claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need Ghostty to see it; it's free at ${GHOSTTY}.`,
   }
   return {
@@ -2011,8 +2017,7 @@ function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: 
 export function expiredPrompt(shown: Shown): string {
   const file = shown.origin ?? shown.source ?? shown.path
   const kind = shown.frames ? 'video' : 'image'
-  return `The ${kind} preview "${shown.title}" expired (${file} is gone). Please regenerate it and show it to me again with show_${kind}` +
-    (shown.compare ? ', with the same compare' : '') + (shown.changes?.length ? ' and the same list of changes' : '') + '.'
+  return `The ${kind} preview "${shown.title}" expired (${file} is gone). Please regenerate it and show it to me again with show_${kind}${shown.compare ? ', with the same compare' : ''}${shown.changes?.length ? ' and the same list of changes' : ''}.`
 }
 function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
   return NoticeBox(ui, $, width, {
@@ -2275,7 +2280,7 @@ export function toolLine(tool: string, input: unknown, isRunning: boolean): stri
   ].filter(Boolean)
   const verb = tool.endsWith('video') ? (isRunning ? 'Cutting video' : 'Video') : isRunning ? 'Loading image' : 'Image'
 
-  return `${tool.endsWith('video') ? '▶' : '▣'} ${verb} · ${what}${extra.length ? ' · ' + extra.join(' · ') : ''}`
+  return `${tool.endsWith('video') ? '▶' : '▣'} ${verb} · ${what}${extra.length ? ` · ${extra.join(' · ')}` : ''}`
 }
 
 const CHECKS = {
@@ -3005,26 +3010,14 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'show_image',
       description:
-        "Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\n" +
-        'Use it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. ' +
-        "Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\n" +
-        'When the image shows work you changed, also pass `changes` (what you changed, a few words each) and `compare` (an image of the same view from before the change), so the user can switch between Original, Updated and Compare. ' +
-        'Pass `summary` only for checks you actually ran. When you show a new version of something you showed earlier, pass `previous` with its #id so both stay in the same history.\n\n' +
-        "The image goes to the user's screen, not to you. Read the file yourself only if you need to check it.\n\n" +
-        SCRATCH_NOTE,
+        `Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\nUse it without being asked whenever you have made or changed something visual, before you say the work is done: screenshot a page or component with headless Playwright, or show a design concept, chart, slide or generated image. Do this instead of asking the user to open a file or a localhost URL. Don't use it when nothing visual changed.\n\nWhen the image shows work you changed, also pass \`changes\` (what you changed, a few words each) and \`compare\` (an image of the same view from before the change), so the user can switch between Original, Updated and Compare. Pass \`summary\` only for checks you actually ran. When you show a new version of something you showed earlier, pass \`previous\` with its #id so both stay in the same history.\n\nThe image goes to the user's screen, not to you. Read the file yourself only if you need to check it.\n\n${SCRATCH_NOTE}`,
       inputSchema: IMAGE_INPUT,
       isDeferred: false,
     })
     await $.tool.register({
       name: 'show_video',
       description:
-        "Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\n" +
-        'Use it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\n' +
-        'When the video shows work you changed, pass `changes`, each with `at` (the second it appears), and `checks` for what you tested, also with `at`. ' +
-        'For a fix, record the same steps on the old version and pass that file as `compare` with its own `compare_checks`; the two play side by side, in sync. ' +
-        'Pass `summary` only for checks you actually ran, and `previous` with an earlier #id when this is a new version of something you showed.\n\n' +
-        'Keep clips short: they are played as frames, at most 900 at up to 12 per second. You do not see the video.\n\n' +
-        SCRATCH_NOTE,
+        `Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\nUse it without being asked to show recordings: after building or fixing an interactive feature, record a headless Playwright run that clicks through it and play that, rather than asking the user to try it themselves. Also use it for animations and for ad or film cuts you have made.\n\nWhen the video shows work you changed, pass \`changes\`, each with \`at\` (the second it appears), and \`checks\` for what you tested, also with \`at\`. For a fix, record the same steps on the old version and pass that file as \`compare\` with its own \`compare_checks\`; the two play side by side, in sync. Pass \`summary\` only for checks you actually ran, and \`previous\` with an earlier #id when this is a new version of something you showed.\n\nKeep clips short: they are played as frames, at most 900 at up to 12 per second. You do not see the video.\n\n${SCRATCH_NOTE}`,
       inputSchema: TOOL_INPUT,
       isDeferred: false,
     })
