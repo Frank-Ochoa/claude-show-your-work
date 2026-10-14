@@ -1,0 +1,24 @@
+name: Promote
+
+on:
+  push:
+    branches: [releases]
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: Mark the Stable version's release as full
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Promote the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' .claude-plugin/plugin.json)"
+          tag="show-your-work--v$version"
+          # A version first released on Latest became a pre-release; on Stable it's the latest release.
+          if gh release view "$tag" >/dev/null 2>&1; then gh release edit "$tag" --prerelease=false --latest; fi

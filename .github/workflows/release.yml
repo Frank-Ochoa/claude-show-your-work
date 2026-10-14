@@ -25,4 +25,7 @@ jobs:
           # The notes are the summary of the version's own commit ("0.6.3: ..."),
           # not of whatever commit happens to be last.
           subject="$(git log --format=%s --grep="^${version#v}: " -1 "$TAG")"
-          gh release create "$TAG" --title "$version" --notes "${subject#*: }" --verify-tag
+          # A version not on releases yet (Stable) is out on Latest only: a pre-release.
+          git fetch --quiet origin releases
+          if git merge-base --is-ancestor "$TAG" origin/releases; then stage=--latest; else stage=--prerelease; fi
+          gh release create "$TAG" --title "$version" --notes "${subject#*: }" --verify-tag "$stage"
