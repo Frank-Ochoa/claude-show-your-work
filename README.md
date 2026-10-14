@@ -7,12 +7,9 @@
 <p align="center">Claude Code can show you pictures and play videos in the terminal.</p>
 
 <p align="center">
+  <a href="https://github.com/iamumeransari/claude-show-your-work/stargazers"><img src="https://img.shields.io/github/stars/iamumeransari/claude-show-your-work?style=flat&logo=github&label=Stars&color=E3B341" alt="GitHub stars"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Claude_Code-plugin-D97757?logo=claude&logoColor=white" alt="Claude Code plugin"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/Ghostty-supported-3B82F6?logo=gnometerminal&logoColor=white" alt="Works in Ghostty"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black" alt="Linux"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white" alt="Windows"></a>
-  <a href="https://github.com/iamumeransari/claude-show-your-work/actions/workflows/ci.yml"><img src="https://github.com/iamumeransari/claude-show-your-work/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-555555" alt="macOS, Linux and Windows"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/iamumeransari/claude-show-your-work?color=22C55E" alt="MIT license"></a>
 </p>
 
