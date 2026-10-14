@@ -1,6 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
-import { liveChange, inClipOrder, wrapWords, pagesOf, anchors, barChunks, changeAt, mapTime, qaTotals, align, matchOf, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, expand, fit, frameFile, parseShown, cellOf, frameWidth, isAtLeast, isInstalledCopy, paneSize, layoutOf, targetBox, drawBox, pixelsFor, pairHeightOf, playWord, sameMoment, sampleRate, sizeFor, timesThatMean, versionsOf, noteOf, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, tabLabel, handleOf, looseName, pngDims } from '../hooks/register'
+import { wrapWords, pagesOf, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, sizeFor, tabLabel } from '../hooks/layout'
+import { isInstalledCopy } from '../hooks/telemetry'
+import { isAtLeast } from '../hooks/setup'
+import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
+import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
+import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })

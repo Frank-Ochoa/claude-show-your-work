@@ -9,6 +9,9 @@ Things the Claude Code hooks loader and runtime enforce. Breaking one of the loa
 - **`$.plugin.root` is spelled exactly like that.** `$.plugin?.root` or destructuring is rejected.
 - `$` is always used as `$.noun.event(...)` at the call site; `on` is always `on("<event>", hook)`.
 - **The entry module can import sibling modules at runtime** (`import { x } from './layout'`), including modules whose functions take `$`. `hooks.json` lists only the entry module. The rules above apply in every module. An imported `let` is read-only to the importer, so state assigned from more than one module lives in one shared object.
+- **Past an import, `$` is followed only into a function declaration.** In any module but the entry one, a function that takes `$` is written `function name($, ...) { ... }`, never `const name = ($, ...) =>`, or the module doesn't load.
+- **An atom is read only where it is declared.** `read($, x)` and `update($, x, ...)` need `x` made by `atom(...)` in a const of the same file, so each file that reads or updates `welcome` declares it.
+- **A hook's filter is read from the entry module's own consts.** With `WELCOME` imported, `claude plugin validate` lists `on('ui.render', { requestId: WELCOME }, ...)` as `requestId=?`, so `register.tsx` spells the id itself.
 
 ## Runtime behaviour
 

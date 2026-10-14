@@ -36,7 +36,7 @@ No sizes in the UI: no resolution, and a video's length only on its scrub bar.
 
 ## Sizing
 
-All sizing goes through one section in `register.tsx` ("Sizing"):
+All sizing goes through `hooks/layout.ts`:
 
 - `layoutOf(room)`: the space a player has. `room` is its columns and rows, pane or inline, and whether it has a report. Gives `maxCols`, `maxRows`, whether the report sits beside (`isWide`) and the inner width. Inline, a picture takes at most 120 columns and 55% of the rows (8 to 40); in a pane up to 220 columns and the pane's rows minus 12. The report sits beside when there is one and the chat is at least `WIDE_ENOUGH` (110) columns, in a `SIDE` (40) column.
 - `targetBox(w, h, layout, cell)`: the box a picture of that shape fills.

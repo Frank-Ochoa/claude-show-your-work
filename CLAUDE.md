@@ -1,6 +1,16 @@
 # show-your-work
 
-A Claude Code plugin that draws pictures and videos in the chat (Ghostty). All the code is in `hooks/register.tsx`; tests are in `tests/`.
+A Claude Code plugin that draws pictures and videos in the chat (Ghostty). The code is in `hooks/`, one module per area; tests are in `tests/`.
+
+- `register.tsx`: the entry module (the only one in `hooks.json`): tools, commands and the hooks
+- `state.ts`: what more than one module reads or changes
+- `setup.ts`: temp folder, ffmpeg and the terminal, found at session start
+- `layout.ts`: sizing, and fitting text to a width
+- `media.ts`: preparing pictures and videos, frames, the side-by-side clip, the frame cache
+- `history.ts`: version history and the shown item behind a result's marker
+- `player.tsx`: playback and the player's components
+- `onboarding.tsx` and `tour.ts`: settings, welcome and tour
+- `telemetry.ts` and `updater.ts`: usage stats and updates
 
 Before changing an area, read its notes in `docs/technical/`:
 

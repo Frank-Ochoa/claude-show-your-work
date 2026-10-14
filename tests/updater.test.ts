@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { BRANCHES, MOVE_SH, checkForUpdate } from '../hooks/register'
+import { BRANCHES, MOVE_SH, checkForUpdate } from '../hooks/updater'
 
 // A stand-in for the engine: GitHub says `latest`, the CLI reports `installed`
 // from a marketplace of `source`, and every command run is recorded.

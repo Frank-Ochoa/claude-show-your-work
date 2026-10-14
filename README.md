@@ -226,7 +226,7 @@ To turn off updates and usage counts without opening the settings, add this to `
 "env": { "SHOW_YOUR_WORK_AUTO_UPDATE": "0", "SHOW_YOUR_WORK_TELEMETRY": "0" }
 ```
 
-To work on the plugin, edit `hooks/register.tsx` and run `/reload-plugins` to load your changes. Before sending a change, run `claude plugin validate .` and `claude plugin test .`.
+To work on the plugin, edit the modules in `hooks/` (`register.tsx` is the entry) and run `/reload-plugins` to load your changes. Before sending a change, run `claude plugin validate .` and `claude plugin test .`.
 
 </details>
 

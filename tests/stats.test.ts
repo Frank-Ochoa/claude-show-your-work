@@ -1,6 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 
-import { earlierNo, hadVersionBefore06, isNewer, isStatsBlocked, nicknameOf, noticeOf, cantDraw, causeOf, NO_FFMPEG, noFfmpeg } from '../hooks/register'
+import { isStatsBlocked, nicknameOf } from '../hooks/telemetry'
+import { noticeOf, NO_FFMPEG, noFfmpeg } from '../hooks/media'
+import { hadVersionBefore06, isNewer } from '../hooks/updater'
+import { cantDraw, causeOf } from '../hooks/player'
+import { earlierNo } from '../hooks/onboarding'
 
 test('a newer version is spotted, an older or equal one is not', () => {
   expect(isNewer('0.5.0', '0.4.0')).toBe(true)
