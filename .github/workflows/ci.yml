@@ -22,6 +22,12 @@ jobs:
       - name: Lint
         run: npx --yes @biomejs/biome@1.9.4 lint hooks tests types
 
+      - name: Bundle is up to date
+        run: node tools/bundle.mjs --check
+
+      - name: Validate on the oldest supported Claude Code
+        run: npx --yes @anthropic-ai/claude-code@2.1.292 plugin validate .
+
       - name: Install Claude Code
         run: npm install --global @anthropic-ai/claude-code@2.1.299
 
