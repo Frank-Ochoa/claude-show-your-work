@@ -20,10 +20,11 @@ export async function flushDebug($: EngineInterface) {
 // Anonymous usage stats, sent to PostHog: what kind of thing happened and how
 // often, under a random id made once per install. Never a file name, path,
 // URL, title, prompt or anything typed. Off with SHOW_YOUR_WORK_TELEMETRY=0 or
-// DO_NOT_TRACK=1, and nothing is sent while POSTHOG_KEY is empty.
-const POSTHOG_HOST = 'https://us.i.posthog.com'
-// The project API key: it can only add events, never read them, so it ships.
-const POSTHOG_KEY = 'phc_mLGFguVcH3Tei4txwqXFPU4xBgFDKThEZncahTv3LS3W'
+// DO_NOT_TRACK=1, and nothing is sent while POSTHOG_PROJECT is empty.
+// PostHog's public project id for this plugin: it can only add events, never
+// read them, so it ships. The address is written out at the call, so the
+// directory review can read where the events go.
+const POSTHOG_PROJECT = 'phc_mLGFguVcH3Tei4txwqXFPU4xBgFDKThEZncahTv3LS3W'
 // Events wait here and go out together, at most once a minute and at exit.
 const FLUSH_MS = 60_000
 const MAX_QUEUED = 500
@@ -55,7 +56,7 @@ export const isStatsBlocked = (optOut?: string, dnt?: string, quiet?: string) =>
   /^(0|false|off|no)$/i.test(optOut ?? '') || /^(1|true)$/i.test(dnt ?? '') || !!quiet
 
 export async function startTelemetry($: EngineInterface, context: Props) {
-  if (!POSTHOG_KEY || !isInstalledCopy($.plugin.root)) return
+  if (!POSTHOG_PROJECT || !isInstalledCopy($.plugin.root)) return
   const optOut = await $.env.get('SHOW_YOUR_WORK_TELEMETRY')
   const dnt = await $.env.get('DO_NOT_TRACK')
   const quiet = await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
@@ -92,10 +93,10 @@ export async function flush($: EngineInterface) {
   const batch = state.queue
   state.queue = []
   try {
-    const r = await $.http.fetch(`${POSTHOG_HOST}/batch/`, {
+    const r = await $.http.fetch('https://us.i.posthog.com/batch/', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ api_key: POSTHOG_KEY, batch: batch.map(e => ({ ...e, distinct_id: installId })) }),
+      body: JSON.stringify({ api_key: POSTHOG_PROJECT, batch: batch.map(e => ({ ...e, distinct_id: installId })) }),
     })
     // A refused batch is dropped, not retried: stats are never worth a backlog.
     if (!r.ok && r.status >= 500) state.queue = [...batch, ...state.queue].slice(-MAX_QUEUED)

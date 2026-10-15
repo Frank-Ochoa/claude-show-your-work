@@ -23,7 +23,6 @@ export const PLUGIN = 'show-your-work'
 const SOURCE = `https://github.com/${REPO}.git`
 export const BRANCHES = { stable: 'releases', latest: 'latest' } as const
 type Branch = (typeof BRANCHES)[keyof typeof BRANCHES]
-const manifestOn = (branch: string) => `https://raw.githubusercontent.com/${REPO}/${branch}/.claude-plugin/plugin.json`
 const DAY_MS = 24 * 60 * 60 * 1000
 
 // A version folder from before 0.6.0 in the plugin cache: this install was
@@ -98,7 +97,11 @@ export type Found =
   | { kind: 'offline' }
 export async function findUpdate($: EngineInterface, current: string, branch: Branch): Promise<Found> {
   // No such branch yet, or no network: nothing to say about it.
-  const r = await $.http.fetch(manifestOn(branch)).catch(() => null)
+  // Each channel's address written out in full, so the directory review can read it.
+  const r = await (branch === BRANCHES.latest
+    ? $.http.fetch('https://raw.githubusercontent.com/iamumeransari/claude-show-your-work/latest/.claude-plugin/plugin.json')
+    : $.http.fetch('https://raw.githubusercontent.com/iamumeransari/claude-show-your-work/releases/.claude-plugin/plugin.json')
+  ).catch(() => null)
   if (!r?.ok) return { kind: 'offline' }
   const latest = String(jsonOf<{ version?: string }>(r.text, {}).version ?? '')
   if (!latest) return { kind: 'offline' }
