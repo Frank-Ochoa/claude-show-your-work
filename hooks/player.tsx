@@ -1059,8 +1059,7 @@ export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'vide
   if (cause === 'terminal') return {
     title: "Your terminal isn't supported by show-your-work",
     text: `"${name}" is ready, but this terminal can't draw ${what}. show-your-work works in any terminal that supports the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole. See the full list:`,
-    // biome-ignore lint/suspicious/noThenProperty: plain data, never awaited
-    link: { href: TERMINALS, then: 'Then press Copy command and paste it in one of them to open this chat there.' },
+    link: { href: TERMINALS, after: 'Then press Copy command and paste it in one of them to open this chat there.' },
     command: `claude --resume${id ? ` ${id}` : ''}`, label: 'Copy command', action: 'copy_resume_command',
     claude: `this terminal can't draw pictures, so the person saw a notice instead of ${name}. They need a terminal that supports the kitty graphics protocol, such as Ghostty, kitty, WezTerm, Warp or Konsole (list at ${TERMINALS}).`,
   }
@@ -1097,14 +1096,14 @@ function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
 // and one button that copies what to paste back (a prompt, or a command).
 // isCalm: something that happens by design (an expired preview), drawn
 // plainly; the warning colour and ⚠ are kept for real problems.
-export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string; link?: { href: string; then: string }; isCalm?: boolean; onPress?: () => void }) {
+export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string; link?: { href: string; after: string }; isCalm?: boolean; onPress?: () => void }) {
   const { Box, Text, Button, Link } = ui
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={n.isCalm ? 'subtle' : 'warning'} paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
       {n.isCalm ? <Text bold>{n.title}</Text> : <Text bold color="warning">⚠ {n.title}</Text>}
       <Text wrap="wrap">{'\n'}{n.text}</Text>
       {n.link ? <Box marginTop={1}><Link href={n.link.href} /></Box> : null}
-      {n.link ? <Text wrap="wrap">{'\n'}{n.link.then}</Text> : null}
+      {n.link ? <Text wrap="wrap">{'\n'}{n.link.after}</Text> : null}
       {/* A resume command is long and only ever pasted: the button copies it, unseen. */}
       {n.command && n.action !== 'copy_resume_command' && !n.onPress ? <Box marginTop={1}><Text bold>{n.command}</Text></Box> : null}
       <Box flexDirection="row" gap={2} marginTop={1}>

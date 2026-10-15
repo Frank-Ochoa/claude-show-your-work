@@ -39,11 +39,11 @@ let isFlushing = false
 const ADJECTIVES = ['Swift', 'Quiet', 'Brave', 'Clever', 'Sunny', 'Lucky', 'Bold', 'Calm', 'Eager', 'Gentle', 'Happy', 'Jolly', 'Keen', 'Lively', 'Mellow', 'Nimble', 'Plucky', 'Rapid', 'Snappy', 'Tidy', 'Witty', 'Zesty', 'Cosmic', 'Fuzzy']
 const ANIMALS = ['Otter', 'Falcon', 'Panda', 'Fox', 'Koala', 'Lynx', 'Heron', 'Badger', 'Gecko', 'Owl', 'Puffin', 'Raccoon', 'Seal', 'Tiger', 'Wombat', 'Yak', 'Bison', 'Crane', 'Dolphin', 'Ferret', 'Hedgehog', 'Lemur', 'Moose', 'Quokka']
 export function nicknameOf(id: string): string {
-  let h = 0
-  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  const n = Math.floor(h / ADJECTIVES.length) % 1000
+  let hash = 0
+  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  const n = Math.floor(hash / ADJECTIVES.length) % 1000
 
-  return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[Math.floor(h / 1000) % ANIMALS.length]} ${n}`
+  return `${ADJECTIVES[hash % ADJECTIVES.length]} ${ANIMALS[Math.floor(hash / 1000) % ANIMALS.length]} ${n}`
 }
 
 // An installed copy runs from Claude Code's plugin cache. One loaded from a

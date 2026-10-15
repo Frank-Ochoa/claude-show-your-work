@@ -228,9 +228,9 @@ export const REASONS: Record<NoticeKind, string> = {
 // file shown again maps to the same frames folder and skips the decode; a
 // re-rendered one gets a new key and decodes fresh.
 export function keyOf(text: string): string {
-  let h = 5381
-  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0
-  return h.toString(16).padStart(8, '0') + text.length.toString(16)
+  let hash = 5381
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0
+  return hash.toString(16).padStart(8, '0') + text.length.toString(16)
 }
 export async function identityOf($: EngineInterface, raw: string): Promise<string | undefined> {
   const st = await $.fs.stat(expand(raw, state.cwd, state.home), { resolve: true }).catch(() => null)

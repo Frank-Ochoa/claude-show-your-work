@@ -190,6 +190,38 @@ You choose whether to share anonymous usage data. You can make that choice durin
 
 </details>
 
+<details>
+<summary><b>What does it run, keep and connect to on my computer?</b></summary>
+
+Here's everything the plugin does on your computer, so you know exactly what you're installing. Your pictures and videos never leave your machine.
+
+To get pictures and videos ready, it uses `ffmpeg` and `ffprobe` (turning a video into frames and reading its length) and, on macOS, `sips` (converting a picture to PNG). When you press View, Show in Finder or Save to Downloads, it opens the file with `open` on macOS or `xdg-open` on Linux. On macOS, `mdfind` helps `/img` find an image you pasted, and inside tmux it asks `tmux` whether pictures can get through.
+
+A few short scripts run with `sh` and `perl`. They find `ffmpeg` and your home folder, read the terminal's cell size so pictures fit, tidy the plugin's temp folder, open a viewer on Linux, and switch between the Stable and Latest channels. It also uses `cp`, `mkdir`, `rm`, `cat` and `touch` for its own temp files, and `claude plugin` to install its own updates from this repository, at most once a day. You can turn updates off.
+
+It keeps these files:
+
+- Video frames and converted pictures go in a temp folder (`$TMPDIR/claude-show-your-work-<your user id>`), and anything older than a week is cleaned up.
+- A copy of each file Claude shows you goes in `.show-your-work/` in your project, so you can look back through versions.
+- Save to Downloads puts a copy in `~/Downloads`.
+- Turn on pictures adds one line to your shell profile (see [Terminals](#terminals)), and turning it off takes the line back out.
+- With `SHOW_YOUR_WORK_DEBUG=1`, it writes a `debug.log` in the temp folder.
+
+Once a day it reads the plugin's latest version number from `raw.githubusercontent.com`.
+
+If Usage data is set to share in `/show-your-work`, it sends anonymous usage counts to `us.i.posthog.com`. These are event names and counts, plus the plugin and Claude Code versions, your terminal, your OS and whether ffmpeg is installed, under a random install id. They never include file names, paths, prompts, anything you type or your IP address. The key in the code is PostHog's public key, which can only send events.
+
+Inside Claude Code, it uses these hooks:
+
+- `prompt.compose` adds one short line to Claude's instructions, telling it this terminal can show pictures (or why it can't). It only does this when the plugin's tools are available.
+- `prompt.submit` closes the settings when you send a message and remembers the names of images you paste, so `/img` can find them. Your message isn't changed.
+- `tool.call` handles the plugin's own `show_image` and `show_video` tools. It never touches other tools.
+- `command.run` runs `/img` and `/show-your-work`. Right after you install, it runs `/show-your-work tour` once to show you around.
+- `ui.render` draws the plugin's player, notices, settings and tour.
+- `session.start` and `session.end` set up the temp folder and terminal at the start, and send any waiting usage counts at the end.
+
+</details>
+
 ## Feedback
 
 To report a bug or suggest a change, [open an issue](https://github.com/iamumeransari/claude-show-your-work/issues).
