@@ -2056,6 +2056,17 @@ export async function turnOffPictures($: EngineInterface) {
   redraw($)
 }
 
+// At session start: whether the person turned pictures on in an earlier
+// session, read from the line in their shell profile. A tab opened before the
+// line was added doesn't have the setting, but pictures are still on.
+export async function readPicturesLine($: EngineInterface) {
+  const label = SWITCHABLE[state.terminalName]?.label
+  const profile = profileOf((await $.env.get('SHELL')) ?? '', state.home, state.isMac)
+  if (!label || !profile) return
+  const text = await $.fs.read(profile).catch(() => '')
+  state.isTurnedOn = text.includes(`${PROFILE_MARK}${label}`)
+}
+
 // Whether pictures are on for this terminal, as the settings row shows it.
 export const arePicturesOn = () => !state.isTurnedOff && (state.isForced || state.isTurnedOn)
 // Terminals that speak the kitty graphics protocol: a failed draw in one of
@@ -2089,11 +2100,14 @@ const TERMINALS = 'https://github.com/iamumeransari/claude-show-your-work#termin
 export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'video', id: string) {
   const what = kind === 'video' ? 'videos' : 'pictures'
   const label = SWITCHABLE[state.terminalName]?.label ?? 'this terminal'
+  // Turned on, but this session started without the setting. A new tab reads
+  // the shell profile and has it; this tab's shell started before the line
+  // was added, so the command sets it for this one restart too.
   if (cause === 'off' && state.isTurnedOn) return {
     title: 'Pictures are on',
-    text: 'Restart Claude Code to see them. Copy the command to pick this chat up where you left off.',
-    command: `claude --resume${id ? ` ${id}` : ''}`, label: 'Copy restart command', action: 'copy_resume_command', isCalm: true,
-    claude: `pictures are turned on for ${label} but only take effect once Claude Code restarts, so the person saw a notice instead of ${name}.`,
+    text: 'Type /exit, then paste the command here to see them now. It reopens this chat where you left off. New terminal tabs show pictures on their own.',
+    command: `env CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1 claude --resume${id ? ` ${id}` : ''}`, label: 'Copy restart command', action: 'copy_resume_command', isCalm: true,
+    claude: `pictures are turned on for ${label}, but this session started before that, so the person saw a notice instead of ${name}. They can type /exit and run the copied command, or open a new terminal tab.`,
   }
   if (cause === 'off') return {
     title: `Pictures are off in ${label}`,
@@ -3497,6 +3511,7 @@ export const register: Register = on => {
       const terminal = terminalOf({ program, term, kitty: !!(await $.env.get('KITTY_WINDOW_ID')), konsole: !!(await $.env.get('KONSOLE_VERSION')) })
       state.terminalName = terminal
       state.isForced = !!(await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES'))
+      await readPicturesLine($)
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
       state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
       if (state.isDebug) $.clock.every(1000, () => void flushDebug($))

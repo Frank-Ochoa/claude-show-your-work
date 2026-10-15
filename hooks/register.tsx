@@ -14,7 +14,7 @@ import { CLEAN_SH, exists, expand, findPasted, identityOf, keyOf, locate, NO_FFM
 import type { Notice } from './media'
 import { handleOf, MARK, noteOf, preparedOf, remember, shownById, shownOf, storeOf, storeVersion, textOf, timesThatMean, versionsOf } from './history'
 import { hadVersionBefore06, PLUGIN } from './updater'
-import { atStep, cantDraw, draw, freshCalls, mayBeDropped, noteDrawn, NoticeBox, player, sideOf, stop, terminalOf, toolLine, versions, Viewer } from './player'
+import { atStep, cantDraw, draw, freshCalls, mayBeDropped, noteDrawn, NoticeBox, player, readPicturesLine, sideOf, stop, terminalOf, toolLine, versions, Viewer } from './player'
 import type { Ui } from './player'
 import { goToStop, loadSettings, Opening, openSettings, openUpdate, openWelcome, Settings, startBackground, startTour, Tour, TOUR_TEXT, UPDATE, UpdatePane, WELCOME_TEXT } from './onboarding'
 
@@ -104,6 +104,7 @@ export const register: Register = on => {
       const terminal = terminalOf({ program, term, kitty: !!(await $.env.get('KITTY_WINDOW_ID')), konsole: !!(await $.env.get('KONSOLE_VERSION')) })
       state.terminalName = terminal
       state.isForced = !!(await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES'))
+      await readPicturesLine($)
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
       state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
       if (state.isDebug) $.clock.every(1000, () => void flushDebug($))

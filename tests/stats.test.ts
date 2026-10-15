@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { state } from '../hooks/state'
 
 import { isStatsBlocked, nicknameOf } from '../hooks/telemetry'
 import { noticeOf, NO_FFMPEG, noFfmpeg } from '../hooks/media'
@@ -114,4 +115,15 @@ test('the terminal is recognised from what it sets in the environment', () => {
   expect(terminalOf(env({ konsole: true }))).toBe('konsole')
   expect(terminalOf(env({ program: 'Apple_Terminal' }))).toBe('apple_terminal')
   expect(terminalOf(env({}))).toBe('other')
+})
+
+test('once pictures are turned on, the restart command turns them on in the same tab too', () => {
+  state.terminalName = 'warp'
+  state.isTurnedOn = true
+  const n = cantDraw('off', 'a.png', 'picture', 'abc123')
+  expect(n.title).toBe('Pictures are on')
+  expect(n.command).toBe('env CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1 claude --resume abc123')
+  state.isTurnedOn = false
+  expect(cantDraw('off', 'a.png', 'picture', 'abc123').label).toBe('Turn on pictures')
+  state.terminalName = ''
 })
