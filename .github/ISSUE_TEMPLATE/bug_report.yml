@@ -1,0 +1,81 @@
+name: Bug report
+description: Something isn't working the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting this. The details below help me find the problem quickly.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see? A screenshot of the notice or the player helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you asked Claude, or what you pressed, in order.
+      placeholder: |
+        1. Asked Claude to show a screenshot of the homepage
+        2. Pressed Play
+        3. ...
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin version
+      description: Run `claude plugin list` in your terminal and copy the show-your-work line.
+      placeholder: show-your-work@iamumeransari 0.6.8
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Code version
+      description: Run `claude --version`.
+      placeholder: 2.1.300
+    validations:
+      required: true
+  - type: dropdown
+    id: terminal
+    attributes:
+      label: Terminal
+      options:
+        - Ghostty
+        - kitty
+        - WezTerm
+        - Warp
+        - Konsole
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: checkboxes
+    id: setup
+    attributes:
+      label: Anything in between?
+      options:
+        - label: tmux, screen or Herdr
+        - label: ssh to another machine
+        - label: Claude Code running as a background session
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Error text, your terminal if you picked Other, or a debug log (run Claude Code with `SHOW_YOUR_WORK_DEBUG=1`; the log path is in the README).
