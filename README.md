@@ -22,7 +22,7 @@ Run these two commands in Claude Code:
 /plugin install show-your-work@iamumeransari
 ```
 
-It works on macOS, Linux and Windows. You need a terminal that supports the kitty graphics protocol, like Ghostty or Warp, and Claude Code 2.1.287 or later. Videos also need ffmpeg: install it with your package manager (`brew install ffmpeg` on macOS), or ask Claude to install it.
+It works on macOS, Linux and Windows. You need a terminal that supports the kitty graphics protocol, like Ghostty or Warp, and Claude Code 2.1.286 or later. Videos also need ffmpeg: install it with your package manager (`brew install ffmpeg` on macOS), or ask Claude to install it.
 
 When the install finishes, a short onboarding shows you around. Run `/show-your-work` at any time to change your settings.
 

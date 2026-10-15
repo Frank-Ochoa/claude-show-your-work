@@ -25,8 +25,14 @@ jobs:
       - name: Bundle is up to date
         run: node tools/bundle.mjs --check
 
-      - name: Validate on the oldest supported Claude Code
-        run: npx --yes @anthropic-ai/claude-code@2.1.292 plugin validate .
+      - name: Test the bundle step
+        run: node --test tools/bundle.test.mjs
+
+      # 2.1.286 is the oldest Claude Code the plugin supports (README, Install).
+      - name: Validate and test on the oldest supported Claude Code
+        run: |
+          npx --yes @anthropic-ai/claude-code@2.1.286 plugin validate .
+          npx --yes @anthropic-ai/claude-code@2.1.286 plugin test .
 
       - name: Install Claude Code
         run: npm install --global @anthropic-ai/claude-code@2.1.299

@@ -148,7 +148,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'show-your-work',
       description: 'Settings for show-your-work; /show-your-work tour for the tour, /show-your-work update to check for updates',
-      argumentHint: '[tour|update]',
+      argumentHint: '[settings|tour|update]',
     })
     await $.command.register({
       name: 'img',
@@ -425,8 +425,10 @@ export const register: Register = on => {
       void openUpdate($).catch(() => undefined)
       return { text: 'Checking for show-your-work updates.' }
     }
+    // /show-your-work settings (or setting) opens them, never closes them.
+    const isSettings = /^settings?$/i.test(e.args.trim())
     // Run again while they're open, the settings close.
-    if ((await $.ui.panes()).some(pane => pane.id === WELCOME)) {
+    if (!isSettings && (await $.ui.panes()).some(pane => pane.id === WELCOME)) {
       await $.ui.close({ id: WELCOME })
       return { text: 'Closed the show-your-work settings.' }
     }
