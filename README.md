@@ -45,7 +45,7 @@ When Claude builds a feature or fixes a bug, it tests the change with Playwright
 - **Live Checks:** Each test check turns green or red as the video reaches it, so you can see exactly where the fix works and where something still fails.
 - **One Place to Review:** You don't need to open a browser, rerun the tests or read through logs, because the recording and its results are right there in the chat.
 
-### Design
+### Images
 
 <p align="center">
   <img src="docs/concepts.jpg" alt="Four landing page concepts for Tern shown in the chat" width="49%">
