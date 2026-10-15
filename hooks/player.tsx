@@ -57,13 +57,44 @@ export const player = (site: string): Player => {
   return one
 }
 
-// Opens a file, folder or URL with the desktop's default app. On a desktop
-// xdg-open doesn't know (niri, sway…) it runs the app in the foreground until
-// it quits, and $.process.run kills it at its timeout (30 s by default), so
-// on Linux it starts detached, in its own session, and returns at once. A
-// missing xdg-open still fails, so the person is told it couldn't open.
-const DETACH_SH = 'command -v "$1" >/dev/null || exit 127; if command -v setsid >/dev/null; then exec setsid -f "$@" </dev/null >/dev/null 2>&1; fi; "$@" </dev/null >/dev/null 2>&1 &'
-const openArgv = (target: string) => (state.isMac ? ['open', target] : ['sh', '-c', DETACH_SH, 'sh', 'xdg-open', target])
+// Opens a file, folder or URL with the desktop's default app.
+//
+// On Linux, xdg-open on a desktop it doesn't recognise (niri, sway…) runs the
+// app in the foreground until it quits, and $.process.run kills whatever is
+// still running at its timeout (30 s by default). So the script below starts
+// xdg-open in a session of its own, then watches it for up to a second:
+//   - xdg-open exits within the second (GNOME and KDE hand the file off and
+//     return; a missing app fails fast): its exit code and error text come back.
+//   - still running after the second: the app is open in the foreground, so
+//     the script returns 0 and leaves it running, outside what the timeout kills.
+// The exit code goes through a file, because a background job that has exited
+// still answers `kill -0` until it is reaped. The helper's own input and output
+// go to /dev/null too: $.process.run waits until every holder of its pipes exits.
+export const OPEN_SH = [
+  'command -v "$1" >/dev/null || exit 127',
+  'st="${TMPDIR:-/tmp}/syw-open-$$"',
+  'run=; command -v setsid >/dev/null && run=setsid',
+  '$run sh -c \'"$@" </dev/null >/dev/null 2>"$0.err"; echo $? > "$0"; sleep 2; rm -f "$0" "$0.err"\' "$st" "$@" </dev/null >/dev/null 2>&1 &',
+  'i=0',
+  'while [ $i -lt 10 ]; do',
+  '  if [ -s "$st" ]; then code=$(cat "$st"); cat "$st.err" >&2; rm -f "$st" "$st.err"; exit "$code"; fi',
+  '  sleep 0.1 2>/dev/null || sleep 1; i=$((i + 1))',
+  'done',
+  'exit 0',
+].join('\n')
+const openArgv = (target: string) => (state.isMac ? ['open', target] : ['sh', '-c', OPEN_SH, 'sh', 'xdg-open', target])
+
+// What went wrong opening something, in words: from xdg-open's exit codes
+// (2 no such file, 3 no app or tool for it, 4 the app failed) and from macOS
+// open's error text. `what` names the kind of thing, as in "no app opens videos".
+export function openFailure(r: { exitCode: number; stderr: string }, what: string, path: string) {
+  const said = r.stderr.trim().split('\n')[0]?.trim().slice(0, 100) ?? ''
+  if (r.exitCode === 127) return "Couldn't open it: xdg-open is missing. Install xdg-utils and try again."
+  if (r.exitCode === 2 || /does not exist|no such file/i.test(said)) return `Couldn't open it: nothing is at ${path} any more.`
+  if (r.exitCode === 3 || /no application knows|no application|no method available|no default/i.test(said)) return `Couldn't open it: no app on this computer is set to open ${what}.`
+  if (r.exitCode === 4) return said ? `Couldn't open it: ${said}` : `Couldn't open it: the app for ${what} failed to start.`
+  return said ? `Couldn't open it: ${said}` : `Couldn't open it (error ${r.exitCode}).`
+}
 
 // The narrowest the scrub and button rows get, in columns: room for the play
 // button, both times, a usable bar and the action buttons on one line.
@@ -844,8 +875,8 @@ export const isScratch = (path: string) => /^\/(private\/)?(tmp|var\/folders)\//
 // paste its path elsewhere.
 function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNarrow: boolean) {
   const { Box, Button } = ui
-  const done = (r: { exitCode: number; stderr: string }, note: string) =>
-    $.ui.toast(r.exitCode === 0 ? note : `Could not: ${r.stderr.trim().slice(0, 120)}`)
+  const done = (r: { exitCode: number; stderr: string }, note: string, what: string, path: string) =>
+    $.ui.toast(r.exitCode === 0 ? note : openFailure(r, what, path))
   const name = source.split('/').pop()!
   const keep = async () => {
     // A free name: "clip.mp4", then "clip 2.mp4", "clip 3.mp4"…
@@ -855,8 +886,10 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
     for (let n = 2; await $.fs.stat(out).then(() => true, () => false); n++) out = `${state.home}/Downloads/${stem} ${n}${ext}`
     if (!state.isMac) await $.process.run(['mkdir', '-p', `${state.home}/Downloads`])
     const r = await $.process.run(['cp', source, out])
-    if (r.exitCode === 0) await $.process.run(state.isMac ? ['open', '-R', out] : openArgv(`${state.home}/Downloads`)).catch(() => undefined)
-    done(r, `Saved to Downloads/${out.split('/').pop()}`)
+    if (r.exitCode !== 0) return $.ui.toast(`Couldn't save it to Downloads: ${r.stderr.trim().split('\n')[0]?.slice(0, 100) || `error ${r.exitCode}`}`)
+    // Saved either way; the folder opening is a convenience on top.
+    await $.process.run(state.isMac ? ['open', '-R', out] : openArgv(`${state.home}/Downloads`)).catch(() => undefined)
+    $.ui.toast(`Saved to Downloads/${out.split('/').pop()}`)
   }
 
   return (
@@ -864,7 +897,7 @@ function Actions(ui: Ui, $: EngineInterface, media: Shown, source: string, isNar
       {!source.startsWith(`${state.home}/Downloads/`) ? (
         <Button key="keep" plain dimColor label="Save to Downloads" onPress={() => { act('save'); void keep() }} />
       ) : (
-        <Button key="reveal" plain dimColor label={state.isMac ? 'Show in Finder' : 'Show in folder'} onPress={() => act('reveal') || void $.process.run(state.isMac ? ['open', '-R', source] : openArgv(source.slice(0, source.lastIndexOf('/')) || '/')).then(r => done(r, state.isMac ? 'Shown in Finder' : 'Opened the folder'))} />
+        <Button key="reveal" plain dimColor label={state.isMac ? 'Show in Finder' : 'Show in folder'} onPress={() => act('reveal') || void $.process.run(state.isMac ? ['open', '-R', source] : openArgv(source.slice(0, source.lastIndexOf('/')) || '/')).then(r => done(r, state.isMac ? 'Shown in Finder' : 'Opened the folder', 'folders', source))} />
       )}
       {!isNarrow && (
         <Button
@@ -1091,7 +1124,7 @@ export async function Viewer(
       label={page ? '↗ Open page' : '↗ View'}
       onPress={() =>
         act(page ? 'open_page' : 'open_file') || void $.process.run(openArgv(page ?? source)).then(r =>
-          $.ui.toast(r.exitCode === 0 ? `Opened ${(page ?? source.split('/').pop()!).slice(0, 60)}` : 'Could not open it'),
+          $.ui.toast(r.exitCode === 0 ? `Opened ${(page ?? source.split('/').pop()!).slice(0, 60)}` : openFailure(r, page ? 'web pages' : media.kind === 'video' ? 'videos' : 'pictures', page ?? source)),
         )
       }
     />

@@ -6,7 +6,7 @@ import { isAtLeast } from '../hooks/setup'
 import { STOPS } from '../hooks/tour'
 import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, chunksBehind, chunksAhead, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
 import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
-import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
+import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord, openFailure } from '../hooks/player'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -408,4 +408,16 @@ test('every tour stop but the last asks for one thing to do', () => {
     expect(!!s.goal).toBe(true)
   }
   expect(STOPS.at(-1)!.goal).toBeUndefined()
+})
+
+test('a file that will not open says why, in words', () => {
+  const at = '/home/a/clip.mp4'
+  expect(openFailure({ exitCode: 127, stderr: '' }, 'videos', at)).toBe("Couldn't open it: xdg-open is missing. Install xdg-utils and try again.")
+  expect(openFailure({ exitCode: 2, stderr: '' }, 'videos', at)).toBe(`Couldn't open it: nothing is at ${at} any more.`)
+  expect(openFailure({ exitCode: 3, stderr: 'xdg-open: no method available for opening' }, 'videos', at)).toBe("Couldn't open it: no app on this computer is set to open videos.")
+  expect(openFailure({ exitCode: 4, stderr: 'gio: Failed to launch: permission denied\n' }, 'videos', at)).toBe("Couldn't open it: gio: Failed to launch: permission denied")
+  expect(openFailure({ exitCode: 4, stderr: '' }, 'pictures', at)).toBe("Couldn't open it: the app for pictures failed to start.")
+  // macOS open: exit 1, with its reason in the text.
+  expect(openFailure({ exitCode: 1, stderr: 'No application knows how to open URL file:///a.xyz' }, 'pictures', at)).toBe("Couldn't open it: no app on this computer is set to open pictures.")
+  expect(openFailure({ exitCode: 1, stderr: 'The file /a.png does not exist.' }, 'pictures', at)).toBe(`Couldn't open it: nothing is at ${at} any more.`)
 })
