@@ -1,5 +1,6 @@
 // Updates: a daily check of the install's channel, and the move between
-// channels.
+// channels. The updater will be turned off after the plugin moves to the
+// Claude Code plugin directory, which keeps it up to date instead.
 import type { EngineInterface } from 'claude-code'
 
 import { state } from './state'
