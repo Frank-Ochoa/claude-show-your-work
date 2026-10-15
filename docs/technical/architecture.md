@@ -17,7 +17,7 @@ How a picture or video gets from Claude's tool call to the terminal, and which m
 | `updater.ts` | The daily update check and moves between Stable and Latest |
 | `telemetry.ts` | Anonymous usage counts and the local timing log |
 
-Only `register.tsx` is listed in `hooks.json`; it imports the rest. The loader's rules apply in every module (see `plugin-loader-and-hooks.md`).
+`register.tsx` is the entry module and imports the rest. `hooks.json` loads `bundle.tsx`, which `node tools/bundle.mjs` joins from all of them, so Claude Code before 2.1.299 can load it (see `plugin-loader-and-hooks.md`). The loader's rules apply in every module.
 
 ## A tool call, end to end
 
