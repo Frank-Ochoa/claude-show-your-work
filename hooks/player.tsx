@@ -390,14 +390,14 @@ export function play($: EngineInterface, site: string, media: Shown, shown?: Sho
     tickAt = Date.now()
     if (one.frame >= frames.count - 1) return stop($, site)
     if (isWaiting) return
-    const next = one.frame + 1
+    const coming = one.frame + 1
     if (!shown?.pair || !one.isSplit) {
       isWaiting = true
-      void frameReady($, media, next, site).finally(() => { isWaiting = false })
-      if (!isFrameCut(media, next)) return void debug(`wait frame=${next}`)
+      void frameReady($, media, coming, site).finally(() => { isWaiting = false })
+      if (!isFrameCut(media, coming)) return void debug(`wait frame=${coming}`)
       isWaiting = false
     }
-    one.frame = next
+    one.frame = coming
     draw($, site, media, shown)
     const now = marks()
     if (now !== last) {
@@ -448,16 +448,16 @@ function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean
 
 // Side by side: both sides at once, locked to the same moment, the shown
 // side's clock driving both.
-function split($: EngineInterface, site: string, shown: Shown, on: boolean) {
+function split($: EngineInterface, site: string, shown: Shown, isOn: boolean) {
   const one = player(site)
-  if (!shown.compare || (on && !shown.pair) || !!one.isSplit === on) return
+  if (!shown.compare || (isOn && !shown.pair) || !!one.isSplit === isOn) return
   const wasPlaying = !!one.timer
   one.timer?.cancel()
   one.timer = undefined
   if (one.isCompare && shown.compare.frames && shown.frames)
     one.frame = Math.max(0, Math.min(shown.frames.count - 1, Math.round(toUpdated(shown, one.frame / shown.compare.frames.fps) * shown.frames.fps)))
   one.isCompare = false
-  one.isSplit = on
+  one.isSplit = isOn
   if (wasPlaying) play($, site, shown, shown)
   redraw($, site)
 }

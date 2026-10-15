@@ -236,10 +236,12 @@ export async function identityOf($: EngineInterface, raw: string): Promise<strin
   const st = await $.fs.stat(expand(raw, state.cwd, state.home), { resolve: true }).catch(() => null)
   return st ? keyOf(`${st.realPath ?? raw}|${st.size}|${st.mtimeMs}`) : undefined
 }
-async function readMeta<T>($: EngineInterface, dir: string): Promise<T | null> {
+// What a folder's meta.json holds, unchecked: the caller says what it expects.
+// (No type argument at the call: the directory review reads only fn($, ...).)
+async function readMeta($: EngineInterface, dir: string): Promise<unknown> {
   const r = await $.process.run(['cat', `${dir}/meta.json`]).catch(() => null)
   if (!r || r.exitCode !== 0) return null
-  try { return JSON.parse(r.stdout) as T } catch { return null }
+  try { return JSON.parse(r.stdout) as unknown } catch { return null }
 }
 function writeMeta($: EngineInterface, dir: string, meta: unknown) {
   return $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0/meta.json"', dir, JSON.stringify(meta)]).catch(() => undefined)
@@ -259,7 +261,7 @@ export async function prepareVideo($: EngineInterface, real: string, title: stri
   // The same file shown before: its folder, frames and size are already there.
   if (folder) {
     const dir = `${state.TMP}/${folder}`
-    const meta = await readMeta<{ frames: Omit<Frames, 'dir'>; width: number; height: number }>($, dir)
+    const meta = (await readMeta($, dir)) as { frames: Omit<Frames, 'dir'>; width: number; height: number } | null
     if (meta) {
       const frames = { ...meta.frames, dir }
       await $.process.run(['touch', dir]).catch(() => undefined)
@@ -429,10 +431,10 @@ async function cutAhead($: EngineInterface, f: Frames, source: string | undefine
       if (j >= f.count) break
       if (!cutChunks.has(chunkKey(f, j))) todo.push({ j, isUrgent: d === 1 })
     }
-    let next = 0
+    let taken = 0
     const worker = async () => {
-      while (next < todo.length) {
-        const { j, isUrgent } = todo[next++]!
+      while (taken < todo.length) {
+        const { j, isUrgent } = todo[taken++]!
         await ensureChunk($, f, source, j, isUrgent)
       }
     }
@@ -570,8 +572,8 @@ export function align(a: number[][], b: number[][], hold = 0.01, band = Number.P
       if (!i && !j) { cost[0] = d; continue }
       const both = i && j ? cost[(i - 1) * m + j - 1]! : Number.POSITIVE_INFINITY
       const up = i ? cost[(i - 1) * m + j]! + hold : Number.POSITIVE_INFINITY
-      const on = j ? cost[i * m + j - 1]! + hold : Number.POSITIVE_INFINITY
-      const best = Math.min(both, up, on)
+      const left = j ? cost[i * m + j - 1]! + hold : Number.POSITIVE_INFINITY
+      const best = Math.min(both, up, left)
       cost[i * m + j] = best + d
       step[i * m + j] = best === both ? 0 : best === up ? 1 : 2
     }
@@ -625,7 +627,7 @@ export async function preparePair($: EngineInterface, original: Shown, updated: 
   // p2: pairs made before the time-first matching are never reused.
   const dir = `${state.TMP}/p2-${keyOf(`${f.dir}|${g.dir}|${pairHeightOf(updated, original)}`)}`
   type PairMeta = { pair: Omit<Frames, 'dir'>; pairWidth: number; pairHeight: number; sync: [number, number][] }
-  const known = await readMeta<PairMeta>($, dir)
+  const known = (await readMeta($, dir)) as PairMeta | null
   if (known) {
     const pair = { ...known.pair, dir }
     await $.process.run(['touch', dir]).catch(() => undefined)

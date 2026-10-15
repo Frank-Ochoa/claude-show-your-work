@@ -117,3 +117,29 @@ test('the bundle itself is never read back in as a module', () => {
   assert.equal(build(dir).status, 0)
   assert.equal(built(dir).match(/\/\/ ── register\.tsx/g).length, 1)
 })
+
+test('$, on and next stay Claude Code\'s: no type arguments, no names of our own', () => {
+  const stops = [
+    'async function readMeta($: unknown) { return 1 }\nconst m = readMeta<number>($, 1)',
+    'const on = 1',
+    'function split(site: string, on: boolean) { return on }',
+    'let next = 0',
+    'const pick = (next: number) => next',
+  ]
+  for (const line of stops) {
+    const r = build(folder({ 'register.tsx': `${line}\n${ENTRY}` }))
+    assert.notEqual(r.status, 0, line)
+    assert.match(r.stderr, /Claude Code's|type argument/, line)
+  }
+  const fine = [
+    "import type { Register } from 'claude-code'\nexport const register: Register = on => {\n  on('session.start', async ($, e, next) => next(e))\n}",
+    'const lane = { next: 1, on: 2 }\nlane.next = 3',
+    "const label = 'on'",
+    'const isOn = true',
+  ]
+  for (const src of fine) {
+    const body = src.includes('register') ? `${src}\n` : `${src}\n${ENTRY}`
+    const r = build(folder({ 'register.tsx': body }))
+    assert.equal(r.status, 0, `${src}\n${r.stderr}`)
+  }
+})
