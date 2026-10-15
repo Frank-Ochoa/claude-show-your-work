@@ -210,9 +210,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'img' }, async ($, e) => {
+  on('command.run', { command: 'img' }, async ($, invoked) => {
     await setUp($)
-    let arg = e.args.trim()
+    let arg = invoked.args.trim()
     if (/^\[Image #\d+\]$/.test(arg) || (!arg && pastedNames.length > 0)) {
       const name = pastedNames.at(-1)
       const found = name ? await findPasted($, name) : null
@@ -415,18 +415,18 @@ export const register: Register = on => {
     return Viewer($, e, atStep(shown, PANE), PANE, true, paneSize(e.viewport, e.props as PaneProps))
   })
 
-  on('command.run', { command: 'show-your-work' }, async ($, e) => {
+  on('command.run', { command: 'show-your-work' }, async ($, invoked) => {
     await setUp($)
-    if (/^tour$/i.test(e.args.trim())) {
+    if (/^tour$/i.test(invoked.args.trim())) {
       startTour($)
       return { text: TOUR_TEXT }
     }
-    if (/^update$/i.test(e.args.trim())) {
+    if (/^update$/i.test(invoked.args.trim())) {
       void openUpdate($).catch(() => undefined)
       return { text: 'Checking for show-your-work updates.' }
     }
     // /show-your-work settings (or setting) opens them, never closes them.
-    const isSettings = /^settings?$/i.test(e.args.trim())
+    const isSettings = /^settings?$/i.test(invoked.args.trim())
     // Run again while they're open, the settings close.
     if (!isSettings && (await $.ui.panes()).some(pane => pane.id === WELCOME)) {
       await $.ui.close({ id: WELCOME })
