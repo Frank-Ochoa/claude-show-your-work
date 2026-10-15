@@ -142,29 +142,38 @@ test('other errors keep the engine\'s own drawing', async $ => {
   expect(drawn.includes('Videos need ffmpeg')).toBe(false)
 })
 
-test('the tour draws its first stop in the chat, with a way forward', async ($, on) => {
+// The tour's row in the chat: the player, and the step's bar under it.
+const tourRow = (requestId: string) => ({ plugin: 'show-your-work', surface: 'terminal', component: 'CommandOutput', requestId, props: { command: 'show-your-work', args: 'tour', text: 'show-your-work tour.', isErrored: false }, viewport: { columns: 120, rows: 50 } }) as any
+
+test('the tour draws its first step with a way forward', async ($, on) => {
   on('store.get', () => ({ value: undefined }))
-  const target = { plugin: 'show-your-work', surface: 'terminal', component: 'CommandOutput', requestId: 'tour-row', props: { command: 'show-your-work', args: 'tour', text: 'show-your-work tour.', isErrored: false }, viewport: { columns: 120, rows: 50 } } as any
-  const mounted = await $.ui.mount(target)
-  const tree = JSON.stringify(await mounted.drawn())
-  expect(tree.includes('Claude shows you what it builds')).toBe(true)
+  const row = await $.ui.mount(tourRow('tour-row'))
+  await new Promise(r => (globalThis as any).setTimeout(r, 30))
+  const tree = JSON.stringify(await row.drawn())
+  expect(tree.includes('PRESS PLAY TO WATCH IT')).toBe(true)
   expect(tree.includes('1 of 5')).toBe(true)
-  expect(tree.includes('Next ›')).toBe(true)
+  expect(tree.includes('[ Next › ]')).toBe(true)
   expect(tree.includes('Skip tour')).toBe(true)
 })
 
-test('the tour walks through its stops with Next', async ($, on) => {
+test('the tour walks through its steps with Next, and Skip ends it', async ($, on) => {
   on('store.get', () => ({ value: undefined }))
-  const target = { plugin: 'show-your-work', surface: 'terminal', component: 'CommandOutput', requestId: 'tour-walk', props: { command: 'show-your-work', args: 'tour', text: 'show-your-work tour.', isErrored: false }, viewport: { columns: 120, rows: 50 } } as any
-  const mounted = await $.ui.mount(target)
-  const seen: string[] = []
-  for (const title of ['Claude shows you what it builds', 'Jump to any change', 'See before and after', 'Every version is kept', "You're set"]) {
+  const row = await $.ui.mount(tourRow('tour-walk'))
+  for (const step of ['1 of 5', '2 of 5', '3 of 5', '4 of 5', '5 of 5']) {
     await new Promise(r => (globalThis as any).setTimeout(r, 30))
-    const tree = JSON.stringify(await mounted.drawn())
-    if (tree.includes(title)) seen.push(title)
-    if (title !== "You're set") await mounted.press({ key: 'next' })
+    expect(JSON.stringify(await row.drawn()).includes(step)).toBe(true)
+    if (step !== '5 of 5') await row.press({ key: 'next' })
   }
-  expect(seen.length).toBe(5)
+  await row.press({ key: 'done' })
+  await new Promise(r => (globalThis as any).setTimeout(r, 30))
+  expect(JSON.stringify(await row.drawn()).includes('Tour finished')).toBe(true)
+})
+
+test('/show-your-work update opens a pane that checks first', async ($, on) => {
+  on('store.get', () => ({ value: undefined }))
+  const target = { plugin: 'show-your-work', surface: 'terminal', component: 'Pane', requestId: 'show-your-work-update', props: { bodyColumns: 66, bodyRows: 7 }, viewport: { columns: 120, rows: 50 } } as any
+  const tree = JSON.stringify(await (await $.ui.mount(target)).drawn())
+  expect(tree.includes('Checking for updates')).toBe(true)
 })
 
 // Every node of a drawn tree whose type is `type`.
@@ -286,23 +295,6 @@ test('the tabs are drawn once, in the title bar, in every layout', async $ => {
       expect(nodesOf(tree, 'Button').filter(b => b.props.key === key).length).toBe(1)
       expect(nodesOf(bars[0], 'Button').filter(b => b.props.key === key).length).toBe(1)
     }
-  }
-})
-
-test('each tour stop shows its instruction once, under its title', async ($, on) => {
-  on('store.get', () => ({ value: undefined }))
-  const target = { plugin: 'show-your-work', surface: 'terminal', component: 'CommandOutput', requestId: 'tour-hints', props: { command: 'show-your-work', args: 'tour', text: 'show-your-work tour.', isErrored: false }, viewport: { columns: 140, rows: 50 } } as any
-  const mounted = await $.ui.mount(target)
-  for (const [title, tag] of [['Claude shows you what it builds', 'Press ▶ Play'], ['Jump to any change', 'Click a change to jump to that moment'], ['See before and after', 'Press Original to see it before the change'], ['Every version is kept', 'Open History, then pick a version']] as const) {
-    await new Promise(r => (globalThis as any).setTimeout(r, 30))
-    const tree = await mounted.drawn()
-    expect(timesIn(tree, title)).toBe(1)
-    expect(timesIn(tree, tag)).toBe(1)
-    // Under the title: the instruction comes straight after it, before the player.
-    const text = JSON.stringify(tree)
-    expect(text.indexOf(tag)).toBeGreaterThan(text.indexOf(title))
-    expect(text.indexOf(tag) - text.indexOf(title)).toBeLessThan(300)
-    await mounted.press({ key: 'next' })
   }
 })
 

@@ -16,7 +16,7 @@ import { handleOf, MARK, noteOf, preparedOf, remember, shownById, shownOf, store
 import { hadVersionBefore06, PLUGIN } from './updater'
 import { atStep, cantDraw, draw, freshCalls, mayBeDropped, noteDrawn, NoticeBox, player, sideOf, stop, terminalOf, toolLine, versions, Viewer } from './player'
 import type { Ui } from './player'
-import { goToStop, loadSettings, Opening, openSettings, openWelcome, Settings, startBackground, startTour, Tour, TOUR_TEXT, WELCOME_TEXT } from './onboarding'
+import { goToStop, loadSettings, Opening, openSettings, openUpdate, openWelcome, Settings, startBackground, startTour, Tour, TOUR_TEXT, UPDATE, UpdatePane, WELCOME_TEXT } from './onboarding'
 
 const PANE = 'show-your-work'
 // The tools, and their names from before the rename, so old windows still draw.
@@ -146,8 +146,8 @@ export const register: Register = on => {
     void $.process.run(['sh', '-c', CLEAN_SH, state.TMP]).then(() => trimFrames($))
     await $.command.register({
       name: 'show-your-work',
-      description: 'Settings for show-your-work, or the tour: /show-your-work tour',
-      argumentHint: '[tour]',
+      description: 'Settings for show-your-work; /show-your-work tour for the tour, /show-your-work update to check for updates',
+      argumentHint: '[tour|update]',
     })
     await $.command.register({
       name: 'img',
@@ -420,6 +420,10 @@ export const register: Register = on => {
       startTour($)
       return { text: TOUR_TEXT }
     }
+    if (/^update$/i.test(e.args.trim())) {
+      void openUpdate($).catch(() => undefined)
+      return { text: 'Checking for show-your-work updates.' }
+    }
     // Run again while they're open, the settings close.
     if ((await $.ui.panes()).some(pane => pane.id === WELCOME)) {
       await $.ui.close({ id: WELCOME })
@@ -429,7 +433,14 @@ export const register: Register = on => {
     return { text: 'Opened the show-your-work settings.' }
   })
 
+  on('ui.render', { component: 'Pane', requestId: UPDATE }, async ($, e) => {
+    await setUp($)
+    await read($, welcome)
+    return UpdatePane($.ui.resolve(e) as Ui, $)
+  })
+
   on('ui.render', { component: 'Pane', requestId: WELCOME }, async ($, e) => {
+    await setUp($)
     await read($, welcome)
     await loadSettings($)
     return Settings($.ui.resolve(e) as Ui, $)
@@ -470,6 +481,9 @@ export const register: Register = on => {
         const { Text } = $.ui.resolve(e) as Ui
         return <Text dimColor>This tour moved to a newer one below.</Text>
       }
+      // A plugin reload resets the module's state. setUp reads the Claude Code
+      // version again, which decides whether buttons can have coloured text.
+      await setUp($)
       await read($, welcome)
       return Tour($, e, e.viewport)
     }
@@ -477,6 +491,7 @@ export const register: Register = on => {
       if (!(row.text ?? '').includes(WELCOME_TEXT)) return next(e)
       welcomeRows.add(e.requestId)
     }
+    await setUp($)
     return Opening($, e, e.requestId, e.viewport)
   })
 }

@@ -9,7 +9,8 @@ import type { Field } from './state'
 import { act, flush, startTelemetry, track } from './telemetry'
 import { prepare } from './media'
 import { preparedOf } from './history'
-import { BRANCHES, checkForUpdate, PLUGIN } from './updater'
+import { BRANCHES, checkForUpdate, findUpdate, installUpdate, PLUGIN } from './updater'
+import type { Found } from './updater'
 import { STOPS } from './tour'
 import type { Stop } from './tour'
 import { atStep, freshCalls, play, players, redraw, stop, Viewer } from './player'
@@ -79,6 +80,88 @@ export async function openWelcome($: EngineInterface) {
   await prepareSplash($).catch(() => undefined)
   await finishWelcome($)
   await openTour($)
+}
+
+// /show-your-work update opens this pane. It checks GitHub for the newest
+// version on the person's channel (Stable or Latest) right away, skipping the
+// once-a-day limit, then offers Install. Nothing installs until they press it.
+export const UPDATE = 'show-your-work-update'
+type UpdateCheck =
+  | { phase: 'checking' }
+  | { phase: 'found'; found: Found }
+  | { phase: 'installing'; latest: string }
+  | { phase: 'installed'; latest: string }
+  | { phase: 'failed' }
+let updateCheck: UpdateCheck = { phase: 'checking' }
+export async function openUpdate($: EngineInterface) {
+  updateCheck = { phase: 'checking' }
+  await $.ui.open({ id: UPDATE, title: 'Updates', focus: true, closeOnEscape: true, holdToasts: true, rows: 9, columns: 70 })
+  await update($, welcome, n => n + 1)
+  await loadSettings($)
+  const branch = settings.stable_updates ? BRANCHES.stable : BRANCHES.latest
+  const found = await findUpdate($, state.pluginVersion, branch).catch((): Found => ({ kind: 'offline' }))
+  updateCheck = { phase: 'found', found }
+  await update($, welcome, n => n + 1)
+}
+
+async function installFound($: EngineInterface, found: Extract<Found, { kind: 'update' | 'move' }>) {
+  act('update_install')
+  updateCheck = { phase: 'installing', latest: found.latest }
+  await update($, welcome, n => n + 1)
+  const isDone = await installUpdate($, found, state.pluginVersion).catch(() => false)
+  updateCheck = isDone ? { phase: 'installed', latest: found.latest } : { phase: 'failed' }
+  await update($, welcome, n => n + 1)
+}
+
+export function UpdatePane(ui: Ui, $: EngineInterface) {
+  const { Box, Text, Button } = ui
+  const channel = settings.stable_updates ? 'Stable releases' : 'Latest releases'
+  const close = <Button key="update-close" label="Close" onPress={() => void $.ui.close({ id: UPDATE })} />
+  const c = updateCheck
+  const found = c.phase === 'found' ? c.found : null
+  // Each outcome of the check sets a bold headline, a dim second line, and
+  // the buttons. Install shows only when there is a newer version.
+  let head = 'Checking for updates…'
+  let line = `On ${state.pluginVersion} · ${channel}`
+  let actions: Ui[] = []
+  if (found?.kind === 'update' || found?.kind === 'move') {
+    head = `Version ${found.latest} is available`
+    actions = [<Button key="update-install" variant="primary" label="Install" onPress={() => void installFound($, found)} />, close]
+  } else if (found?.kind === 'current') {
+    head = "You're on the latest version"
+    actions = [close]
+  } else if (found?.kind === 'pending') {
+    head = `Version ${found.latest} is installed`
+    line = 'Restart Claude Code to start using it.'
+    actions = [close]
+  } else if (found?.kind === 'folder') {
+    head = 'This copy runs from a folder, so it doesn\'t update'
+    actions = [close]
+  } else if (found?.kind === 'pinned') {
+    head = `This install is pinned to ${found.ref}, so it doesn't update`
+    actions = [close]
+  } else if (found?.kind === 'offline') {
+    head = "Couldn't check for updates"
+    line = 'Check your connection and run /show-your-work update again.'
+    actions = [close]
+  } else if (c.phase === 'installing') {
+    head = `Installing ${c.latest}…`
+  } else if (c.phase === 'installed') {
+    head = `Version ${c.latest} is installed`
+    line = 'Restart Claude Code to start using it.'
+    actions = [close]
+  } else if (c.phase === 'failed') {
+    head = "Couldn't install the update"
+    line = `Try again, or run: claude plugin update ${PLUGIN}@iamumeransari`
+    actions = [close]
+  }
+  return (
+    <Box flexDirection="column" paddingX={2} paddingBottom={1}>
+      <Text bold>{head}</Text>
+      <Text dimColor>{line}</Text>
+      {actions.length > 0 && <Box flexDirection="row" columnGap={2} marginTop={1}>{actions}</Box>}
+    </Box>
+  )
 }
 
 // /show-your-work: the switches, in a pane.
@@ -218,9 +301,13 @@ const tourMedia: { recording?: Shown | null; compare?: Shown | null; history?: S
 // The demo's media, read once, all from the launch film: the new-trip form
 // tested with its changes and checks, the Tern hero before and after its
 // trip card, and the hero's history from four directions to every width.
+// Loads the demo media for steps 2, 3 and 4 in parallel. Each one redraws
+// the tour when it finishes, so a step never waits for the others' media.
 async function prepareTour($: EngineInterface) {
   const dir = `${$.plugin.root}/assets/tour`
-  if (tourMedia.recording === undefined) {
+  const ready = () => update($, welcome, n => n + 1)
+  const recording = async () => {
+    if (tourMedia.recording !== undefined) return
     tourMedia.recording = await (async () => {
       const clip = await prepare($, `${dir}/trip-form.mp4`, 'New trip form')
       const lead = clip.frames?.lead ?? 0
@@ -247,15 +334,19 @@ async function prepareTour($: EngineInterface) {
         ],
       } as Shown
     })().catch(() => prepare($, `${dir}/hero.jpg`, 'Tern homepage').catch(() => null))
+    await ready()
   }
-  if (tourMedia.compare === undefined) {
+  const compare = async () => {
+    if (tourMedia.compare !== undefined) return
     tourMedia.compare = await (async () => ({
       ...(await prepare($, `${dir}/hero.jpg`, 'Tern homepage')),
       changes: [{ title: 'Trip card beside the headline' }, { title: 'Friends and trip count under the button' }],
       compare: await prepare($, `${dir}/direction-b.jpg`, 'Original'),
     }) as Shown)().catch(() => null)
+    await ready()
   }
-  if (tourMedia.history === undefined) {
+  const history = async () => {
+    if (tourMedia.history !== undefined) return
     tourMedia.history = await (async () => {
       const hero = `${dir}/hero.jpg`
       return {
@@ -271,8 +362,9 @@ async function prepareTour($: EngineInterface) {
         historyAt: 2,
       } as Shown
     })().catch(() => null)
+    await ready()
   }
-  await update($, welcome, n => n + 1)
+  await Promise.all([recording(), compare(), history()])
 }
 
 // Runs /show-your-work tour, whose output row draws the tour.
@@ -290,10 +382,18 @@ export function startTour($: EngineInterface) {
   state.isTourPending = true
   state.isTourDone = false
   state.tourStop = 0
-  void (async () => {
-    if (!splash) await prepareSplash($).catch(() => undefined)
-    await prepareTour($)
-  })().catch(() => undefined)
+  loadDemo($)
+}
+
+// Starts loading every step's media: step 1's video and the others at the same
+// time. Runs once per plugin load. A reload clears the loaded media but keeps
+// the tour's row in the chat, so Tour calls this too when it finds media missing.
+let isDemoLoading = false
+function loadDemo($: EngineInterface) {
+  if (isDemoLoading) return
+  isDemoLoading = true
+  if (!splash) void prepareSplash($).catch(() => undefined)
+  void prepareTour($).catch(() => undefined)
 }
 
 // Each stop starts its player fresh; a video starts playing by itself.
@@ -316,46 +416,74 @@ async function finishTour($: EngineInterface, isSkip: boolean) {
   await update($, welcome, n => n + 1)
 }
 
+// Draws the tour in the chat: the current step's player (or "Loading the
+// demo…", or the settings on the last step), with the step bar under it. The
+// bar takes the player's width so their edges line up.
 export async function Tour($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], viewport?: { columns: number; rows: number }) {
   const ui = $.ui.resolve(e) as Ui
-  const { Box, Text, Button } = ui
-  const at = state.tourStop
-  const s = STOPS[at]!
-  const isLast = at === STOPS.length - 1
+  const { Box, Text } = ui
+  const s = STOPS[state.tourStop]!
   const media = mediaOf(s)
   if (state.isTourDone) return <Text dimColor>✓ Tour finished. /show-your-work tour shows it again.</Text>
   const room = { columns: viewport?.columns ?? 100, rows: Math.max(24, viewport?.rows ?? 40) }
-  let view = null
-  if (media) view = await Viewer($, e, atStep(media, state.tourSite), state.tourSite, false, room)
-  else if (s.media) view = <Text dimColor>Loading the demo…</Text>
-
+  if (!media && s.media) loadDemo($)
+  const view = media ? await Viewer($, e, atStep(media, state.tourSite), state.tourSite, false, room) : null
+  const width = (view as { props?: { width?: number } } | null)?.props?.width ?? Math.min(room.columns - 2, 100)
   return (
     <Box flexDirection="column" rowGap={1}>
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text>
-          {STOPS.map((_, i) => <Text key={`dot-${i}`} color={i === at ? 'claude' : undefined} dimColor={i !== at}>{i === at ? '● ' : '○ '}</Text>)}
-          <Text dimColor>{`${at + 1} of ${STOPS.length}`}</Text>
-        </Text>
-      </Box>
-      <Box flexDirection="column">
-        <Text bold>{s.title}{state.isStopDone ? <Text color="success">  ✓</Text> : null}</Text>
-        {/* Every stop's instruction, here under its title; kept, dim, once done. */}
-        {s.spot ? <Text color="claude" bold dimColor={state.isStopDone}>{s.tag}</Text> : <Text>{s.tag}</Text>}
-      </Box>
-      {view}
-      {/* Boxed like the player: a title bar, then the choices. */}
-      {isLast && (
-        <Box key="settings-box" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={Math.min((viewport?.columns ?? 100) - 2, 100)}>
+      {view ?? (s.media && <Text dimColor>Loading the demo…</Text>)}
+      {state.tourStop === STOPS.length - 1 && (
+        <Box key="settings-box" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} width={width}>
           <Text bold>Settings</Text>
           <Box marginTop={1}>{SettingRows(ui, $)}</Box>
         </Box>
       )}
-      <Box flexDirection="row" columnGap={2}>
-        {at > 0 && <Button key="prev" label="‹ Back" onPress={() => { act(`tour_back_${at}`); goToStop($, at - 1) }} />}
-        {isLast
-          ? <Button key="done" variant="primary" label="Done" onPress={() => void finishTour($, false)} />
-          : <Button key="next" variant="primary" label="Next ›" onPress={() => { act(`tour_next_${at}`); goToStop($, at + 1) }} />}
-        {!isLast && <Button key="skip" plain dimColor label="Skip tour" onPress={() => void finishTour($, true)} />}
+      {TourBar(ui, $, width)}
+    </Box>
+  )
+}
+
+// The step bar: progress dots and "N of 5" on the first line, then the
+// instruction in capitals with Back, Next and Skip tour on the right. The bar
+// is lavender, and turns green with a ✓ once the person has done the step.
+function TourBar(ui: Ui, $: EngineInterface, columns: number) {
+  const { Box, Text, Button } = ui
+  const at = state.tourStop
+  const s = STOPS[at]!
+  const isLast = at === STOPS.length - 1
+  const isDone = state.isStopDone
+  // Button text is dark to read on the lavender. Claude Code before 2.1.295
+  // can't colour a button's text, so there the buttons use the default colour.
+  // Back and Next are bracketed; Skip tour is plain text, as the least wanted.
+  // Next turns black with light text once the step is done. Light text, because
+  // the terminal inverts a button under the pointer, and dark-on-black inverted
+  // would match the bar and disappear.
+  // The last step has nothing to do, so it starts green.
+  const fill = isDone || !s.goal ? 'success' : 'suggestion'
+  const onBar = (key: string, label: string, onPress: () => void, look: { isMain?: boolean; isButton?: boolean } = {}) => {
+    const text = look.isButton ? `[ ${label} ]` : label
+    if (!state.canColourButtons) return <Button key={key} plain label={text} onPress={onPress} bold={look.isMain} />
+    return (
+      <Button key={key} plain label={text} onPress={onPress}>
+        {look.isMain ? <Text bold color="text" backgroundColor="inverseText">{`  ${label}  `}</Text> : <Text color="inverseText">{text}</Text>}
+      </Button>
+    )
+  }
+  return (
+    <Box key="tour-bar" flexDirection="column" width={columns} paddingX={2} paddingY={1} backgroundColor={fill}>
+      {/* Where you are; then what to do, with the way on beside it. */}
+      <Text color="inverseText">{`${STOPS.map((_, i) => (i === at ? '●' : '○')).join(' ')}   ${at + 1} of ${STOPS.length}`}</Text>
+      <Box flexDirection="row" alignItems="flex-end" columnGap={4}>
+        <Box flexGrow={1} flexShrink={1}><Text bold color="inverseText">{(isDone ? `✓  ${s.tag}` : s.tag).toUpperCase()}</Text></Box>
+        <Box flexDirection="row" columnGap={3} flexShrink={0}>
+          {/* No Back on the last step: it's a wrap-up, and Done is the only choice. */}
+          {at > 0 && !isLast && onBar('prev', '‹ Back', () => { act(`tour_back_${at}`); goToStop($, at - 1) }, { isButton: true })}
+          {/* Next fills in once the step is done; until then it's a plain button. */}
+          {isLast
+            ? onBar('done', 'Done ›', () => void finishTour($, false), { isMain: true, isButton: true })
+            : onBar('next', 'Next ›', () => { act(`tour_next_${at}`); goToStop($, at + 1) }, { isMain: !s.goal || isDone, isButton: true })}
+          {!isLast && onBar('skip', 'Skip tour', () => void finishTour($, true))}
+        </Box>
       </Box>
     </Box>
   )

@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { wrapWords, pagesOf, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, sizeFor, tabLabel } from '../hooks/layout'
 import { isInstalledCopy } from '../hooks/telemetry'
 import { isAtLeast } from '../hooks/setup'
+import { STOPS } from '../hooks/tour'
 import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, chunksBehind, chunksAhead, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
 import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
 import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
@@ -399,4 +400,12 @@ test('a picture short of pixels is drawn whole at its own size, never cropped or
   expect(pixelsFor({ columns: 500 }, RETINA)).toBe(2400)
   expect(pixelsFor({ columns: 5 }, RETINA)).toBe(320)
   expect(pixelsFor(target, null)).toBe(1600)
+})
+
+test('every tour stop but the last asks for one thing to do', () => {
+  for (const s of STOPS.slice(0, -1)) {
+    expect(s.tag.length).toBeGreaterThan(0)
+    expect(!!s.goal).toBe(true)
+  }
+  expect(STOPS.at(-1)!.goal).toBeUndefined()
 })

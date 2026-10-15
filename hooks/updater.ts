@@ -64,6 +64,10 @@ function jsonOf<T>(text: string | undefined, fallback: T): T {
   try { return text ? (JSON.parse(text) as T) : fallback } catch { return fallback }
 }
 
+// The automatic check at session start. It runs at most once a day, never
+// when SHOW_YOUR_WORK_AUTO_UPDATE=0 or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+// is set, and installs any newer version without asking. Claude Code loads
+// the new version from the next session.
 export async function checkForUpdate($: EngineInterface, current: string, branch: Branch = BRANCHES.stable) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
   if (/^(0|false|off|no)$/i.test(off ?? '')) return
@@ -71,35 +75,63 @@ export async function checkForUpdate($: EngineInterface, current: string, branch
   const now = await $.clock.now()
   if (now - Number((await $.store.get('updateCheckedAt')) ?? 0) < DAY_MS) return
   await $.store.set('updateCheckedAt', now)
+  const found = await findUpdate($, current, branch)
+  if (found.kind === 'update' || found.kind === 'move') await installUpdate($, found, current)
+}
 
-  // No such branch yet: stay where it is.
-  const r = await $.http.fetch(manifestOn(branch))
-  if (!r.ok) return
+// The result of checking for an update:
+//   update   a newer version is on the channel's branch
+//   move     the install follows a different branch than the chosen channel
+//   current  already on the newest version
+//   pending  the newest version is installed but runs from the next session
+//   folder   loaded from a local folder (development), so it never updates
+//   pinned   installed from a fixed tag such as #v0.5.14, so it never updates
+//   offline  GitHub couldn't be reached
+export type Found =
+  | { kind: 'update'; latest: string; scope: string }
+  | { kind: 'move'; latest: string; branch: Branch; market: { url?: string; ref?: string } }
+  | { kind: 'current'; latest: string }
+  | { kind: 'pending'; latest: string }
+  | { kind: 'folder' }
+  | { kind: 'pinned'; ref: string }
+  | { kind: 'offline' }
+export async function findUpdate($: EngineInterface, current: string, branch: Branch): Promise<Found> {
+  // No such branch yet, or no network: nothing to say about it.
+  const r = await $.http.fetch(manifestOn(branch)).catch(() => null)
+  if (!r?.ok) return { kind: 'offline' }
   const latest = String(jsonOf<{ version?: string }>(r.text, {}).version ?? '')
-  if (!latest) return
+  if (!latest) return { kind: 'offline' }
 
   // A marketplace read from a folder is someone working on the plugin: leave it.
   const markets = jsonOf<{ name: string; source: string; url?: string; ref?: string }[]>((await claude($, ['plugin', 'marketplace', 'list', '--json']))?.stdout, [])
   const market = markets.find(m => m.name === MARKETPLACE)
-  if (!market || market.source === 'directory') return
+  if (!market || market.source === 'directory') return { kind: 'folder' }
   // Added with #v0.5.14 or another ref: the user chose that version.
   const ref = market.ref ?? 'main'
-  if (ref !== 'main' && !Object.values(BRANCHES).includes(ref as Branch)) return
-  if (ref !== branch) return moveTo($, branch, market)
-  if (!isNewer(latest, current)) return
+  if (ref !== 'main' && !Object.values(BRANCHES).includes(ref as Branch)) return { kind: 'pinned', ref }
+  if (ref !== branch) return { kind: 'move', latest, branch, market }
+  if (!isNewer(latest, current)) return { kind: 'current', latest }
   const plugins = jsonOf<{ id: string; scope?: string; version?: string }[]>((await claude($, ['plugin', 'list', '--json']))?.stdout, [])
   const installed = plugins.find(p => p.id === `${PLUGIN}@${MARKETPLACE}`)
-  if (!installed) return
+  if (!installed) return { kind: 'folder' }
   // Already fetched by an earlier check; it runs from the next session.
-  if (installed.version && !isNewer(latest, installed.version)) return
+  if (installed.version && !isNewer(latest, installed.version)) return { kind: 'pending', latest }
+  return { kind: 'update', latest, scope: installed.scope ?? 'user' }
+}
 
+// Installs an update findUpdate found, through Claude Code's plugin commands.
+// A channel move runs detached and finishes in the background. Returns true
+// when the install (or starting the move) succeeded.
+export async function installUpdate($: EngineInterface, found: Extract<Found, { kind: 'update' | 'move' }>, current: string) {
+  if (found.kind === 'move') return moveTo($, found.branch, found.market)
   await claude($, ['plugin', 'marketplace', 'update', MARKETPLACE])
-  const done = await claude($, ['plugin', 'update', `${PLUGIN}@${MARKETPLACE}`, '--scope', installed.scope ?? 'user'])
+  const done = await claude($, ['plugin', 'update', `${PLUGIN}@${MARKETPLACE}`, '--scope', found.scope])
   if (done?.exitCode !== 0) {
-    track('update_failed', { from: current, to: latest })
-    return
+    track('update_failed', { from: current, to: found.latest })
+    return false
   }
-  track('update_installed', { from: current, to: latest })
+  track('update_installed', { from: current, to: found.latest })
+  return true
 }
 
 // Puts the install on another channel's branch: the marketplace again at that
@@ -121,9 +153,10 @@ const DETACH = ['perl', '-MPOSIX', '-e', 'fork and exit; POSIX::setsid(); exec @
 async function moveTo($: EngineInterface, branch: Branch, market: { url?: string; ref?: string }) {
   const plugins = jsonOf<{ id: string; scope?: string }[]>((await claude($, ['plugin', 'list', '--json']))?.stdout, [])
   const installed = plugins.find(p => p.id === `${PLUGIN}@${MARKETPLACE}`)
-  if (!installed || !claudeBinary) return
+  if (!installed || !claudeBinary) return false
   const url = market.url ?? SOURCE
   const old = market.ref ? `${url}#${market.ref}` : url
   track('channel_move', { from: market.ref ?? 'main', to: branch })
-  await $.process.run([...DETACH, 'sh', '-c', MOVE_SH, 'move', claudeBinary, url, branch, old, installed.scope ?? 'user', MARKETPLACE, `${PLUGIN}@${MARKETPLACE}`]).catch(() => undefined)
+  const r = await $.process.run([...DETACH, 'sh', '-c', MOVE_SH, 'move', claudeBinary, url, branch, old, installed.scope ?? 'user', MARKETPLACE, `${PLUGIN}@${MARKETPLACE}`]).catch(() => undefined)
+  return r?.exitCode === 0
 }
