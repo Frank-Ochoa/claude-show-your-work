@@ -76,7 +76,12 @@ Making an ad, an animation or a launch video? Each cut plays right in the chat, 
 
 ## Terminals
 
-show-your-work works in any terminal that supports the kitty graphics protocol, on macOS, Linux and Windows. That includes Ghostty, kitty, WezTerm, Warp and Konsole.
+show-your-work works in any terminal that supports the kitty graphics protocol, on macOS, Linux and Windows.
+
+- **Ghostty and kitty:** pictures work straight away.
+- **Warp, WezTerm and Konsole:** Claude Code leaves pictures off in these until you turn them on. The first time a picture can't show, press **Turn on pictures**, then restart Claude Code. You can turn it off again in `/show-your-work`.
+
+Turn on pictures adds one line to your shell profile (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`, or fish's `config.fish`) that sets `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1` only inside that terminal. Turning it off removes the line.
 
 ## FAQ
 

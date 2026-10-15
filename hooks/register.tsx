@@ -103,6 +103,7 @@ export const register: Register = on => {
       const term = (await $.env.get('TERM')) ?? ''
       const terminal = terminalOf({ program, term, kitty: !!(await $.env.get('KITTY_WINDOW_ID')), konsole: !!(await $.env.get('KONSOLE_VERSION')) })
       state.terminalName = terminal
+      state.isForced = !!(await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES'))
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
       state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
       if (state.isDebug) $.clock.every(1000, () => void flushDebug($))

@@ -1303,7 +1303,7 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
     const r = await $.ui.blit({ requestId: site, key, source: shownNow ? await pngSource($, shownNow) : pic.src })
     if (r.deny && /alt/i.test(r.deny)) {
       state.canImage = false
-      state.drawCause = causeOf(state.inTmux, state.terminalName)
+      state.drawCause = causeOf(state.inTmux, state.terminalName, state.isForced)
       track('cannot_draw', { cause: state.drawCause })
       $.ui.toast("Pictures can't show here: see the notice in the chat.")
       redraw($)
@@ -1982,16 +1982,91 @@ export const resumeCommand = (id: string) =>
   id ? `claude stop ${id}; CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume ${id}` : 'CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume'
 
 // Why pictures can't draw here, once a draw has failed: tmux blocking them,
-// a terminal without picture support, or a background session.
-export type DrawCause = 'tmux' | 'herdr' | 'terminal' | 'background'
+// a terminal without picture support, a background session, or a terminal
+// where Claude Code leaves pictures off until they're turned on.
+export type DrawCause = 'tmux' | 'herdr' | 'terminal' | 'background' | 'off'
+
+// Claude Code turns pictures on by itself only in Ghostty and kitty. Warp,
+// WezTerm and Konsole draw them too, but only when
+// CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1 is set before Claude Code starts: Claude
+// Code reads it at launch, so a plugin can't set it for the running session.
+// Turn on pictures adds one line to the person's shell profile that sets it
+// only inside that terminal, so other terminals are unaffected.
+export const SWITCHABLE: Record<string, { label: string; sh: string; fish: string }> = {
+  warp: { label: 'Warp', sh: '[ "$TERM_PROGRAM" = "WarpTerminal" ]', fish: 'test "$TERM_PROGRAM" = WarpTerminal' },
+  wezterm: { label: 'WezTerm', sh: '[ "$TERM_PROGRAM" = "WezTerm" ]', fish: 'test "$TERM_PROGRAM" = WezTerm' },
+  konsole: { label: 'Konsole', sh: '[ -n "$KONSOLE_VERSION" ]', fish: 'test -n "$KONSOLE_VERSION"' },
+}
+// Marks the line, so it is found again to skip a second copy or to remove it.
+export const PROFILE_MARK = '# show-your-work: pictures in '
+
+// The profile file the person's login shell reads, from $SHELL. Null for a
+// shell this doesn't know: the notice then shows the line to add by hand.
+export function profileOf(shell: string, home: string, isMac: boolean): string | null {
+  const name = shell.split('/').pop() ?? ''
+  if (name === 'zsh') return `${home}/.zshrc`
+  if (name === 'bash') return isMac ? `${home}/.bash_profile` : `${home}/.bashrc`
+  if (name === 'fish') return `${home}/.config/fish/config.fish`
+  return null
+}
+
+// The line itself, in the shell's own syntax.
+export function profileLine(terminal: string, shell: string): string {
+  const t = SWITCHABLE[terminal]!
+  const mark = `${PROFILE_MARK}${t.label}`
+  return /fish$/.test(shell)
+    ? `if ${t.fish}; set -gx CLAUDE_CODE_FORCE_TERMINAL_IMAGES 1; end ${mark}`
+    : `if ${t.sh}; then export CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1; fi ${mark}`
+}
+
+// Turn on pictures: appends the line once, then the notice says to restart.
+// When the shell or its profile can't be written, the notice shows the line
+// to add by hand instead.
+export async function turnOnPictures($: EngineInterface) {
+  act('turn_on_pictures')
+  const shell = (await $.env.get('SHELL')) ?? ''
+  const profile = profileOf(shell, state.home, state.isMac)
+  const line = profileLine(state.terminalName, shell)
+  if (!profile) return $.ui.toast(`Add this line to your shell profile, then restart Claude Code: ${line}`)
+  const before = await $.fs.read(profile).catch(() => '')
+  if (!before.includes(`${PROFILE_MARK}${SWITCHABLE[state.terminalName]!.label}`)) {
+    const written = await $.fs.write(profile, `${before}${before && !before.endsWith('\n') ? '\n' : ''}${line}\n`).then(() => true, () => false)
+    if (!written) return $.ui.toast(`Couldn't write ${profile}. Add this line to it, then restart Claude Code: ${line}`)
+  }
+  state.isTurnedOn = true
+  state.isTurnedOff = false
+  redraw($)
+}
+
+// Turn pictures off again (the settings row): removes the marked line.
+export async function turnOffPictures($: EngineInterface) {
+  act('turn_off_pictures')
+  const profile = profileOf((await $.env.get('SHELL')) ?? '', state.home, state.isMac)
+  const label = SWITCHABLE[state.terminalName]?.label
+  if (profile && label) {
+    const before = await $.fs.read(profile).catch(() => '')
+    const after = before.split('\n').filter(l => !l.includes(`${PROFILE_MARK}${label}`)).join('\n')
+    if (after !== before) await $.fs.write(profile, after).catch(() => undefined)
+  }
+  state.isTurnedOn = false
+  state.isTurnedOff = true
+  redraw($)
+}
+
+// Whether pictures are on for this terminal, as the settings row shows it.
+export const arePicturesOn = () => !state.isTurnedOff && (state.isForced || state.isTurnedOn)
 // Terminals that speak the kitty graphics protocol: a failed draw in one of
 // them is a background session, not the terminal.
 export const KITTY_TERMINALS = ['ghostty', 'kitty', 'wezterm', 'warp', 'konsole']
 // Herdr, like tmux, sits between Claude Code and the terminal: pictures get
 // through only with its kitty graphics pass-through on, to a terminal that
 // draws them.
-export const causeOf = (tmux: boolean, terminal: string): DrawCause =>
-  tmux ? 'tmux' : terminal === 'herdr' ? 'herdr' : KITTY_TERMINALS.includes(terminal) ? 'background' : 'terminal'
+export const causeOf = (tmux: boolean, terminal: string, isForced = false): DrawCause =>
+  tmux ? 'tmux'
+    : terminal === 'herdr' ? 'herdr'
+    : SWITCHABLE[terminal] ? (isForced ? 'terminal' : 'off')
+    : KITTY_TERMINALS.includes(terminal) ? 'background'
+    : 'terminal'
 
 // Which terminal this is, from what each one sets in the environment.
 export function terminalOf(env: { program: string; term: string; kitty: boolean; konsole: boolean }): string {
@@ -2010,6 +2085,19 @@ const TERMINALS = 'https://github.com/iamumeransari/claude-show-your-work#termin
 
 export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'video', id: string) {
   const what = kind === 'video' ? 'videos' : 'pictures'
+  const label = SWITCHABLE[state.terminalName]?.label ?? 'this terminal'
+  if (cause === 'off' && state.isTurnedOn) return {
+    title: 'Pictures are on',
+    text: 'Restart Claude Code to see them. Copy the command to pick this chat up where you left off.',
+    command: `claude --resume${id ? ` ${id}` : ''}`, label: 'Copy restart command', action: 'copy_resume_command', isCalm: true,
+    claude: `pictures are turned on for ${label} but only take effect once Claude Code restarts, so the person saw a notice instead of ${name}.`,
+  }
+  if (cause === 'off') return {
+    title: `Pictures are off in ${label}`,
+    text: 'Turn them on to see pictures and videos here.',
+    command: '', label: 'Turn on pictures', action: 'turn_on_pictures', isCalm: true,
+    claude: `pictures are off in ${label} until the person presses Turn on pictures in the notice and restarts Claude Code, so they saw a notice instead of ${name}.`,
+  }
   if (cause === 'tmux') return {
     title: `tmux is blocking ${what}`,
     text: `"${name}" is ready, but tmux stops ${what} from reaching the terminal. Add this line to ~/.tmux.conf, reload tmux, and ask Claude to show it again. Or open this chat outside tmux.`,
@@ -2040,6 +2128,7 @@ export function cantDraw(cause: DrawCause, name: string, kind: 'picture' | 'vide
 
 function Warning(ui: Ui, $: EngineInterface, site: string, shown: Shown, width: number) {
   const n = cantDraw(state.drawCause, shown.title, shown.frames ? 'video' : 'picture', state.sessionId)
+  if (n.action === 'turn_on_pictures') return NoticeBox(ui, $, width, { ...n, copy: '', onPress: () => void turnOnPictures($) })
   return NoticeBox(ui, $, width, { ...n, copy: n.command })
 }
 
@@ -2062,7 +2151,7 @@ function Expired(ui: Ui, $: EngineInterface, shown: Shown, width: number) {
 // and one button that copies what to paste back (a prompt, or a command).
 // isCalm: something that happens by design (an expired preview), drawn
 // plainly; the warning colour and ⚠ are kept for real problems.
-export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string; link?: { href: string; then: string }; isCalm?: boolean }) {
+export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title: string; text: string; command?: string; copy: string; label: string; action: string; link?: { href: string; then: string }; isCalm?: boolean; onPress?: () => void }) {
   const { Box, Text, Button, Link } = ui
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={n.isCalm ? 'subtle' : 'warning'} paddingX={2} paddingY={1} width={Math.max(40, Math.min(width, 96))}>
@@ -2071,14 +2160,14 @@ export function NoticeBox(ui: Ui, $: EngineInterface, width: number, n: { title:
       {n.link ? <Box marginTop={1}><Link href={n.link.href} /></Box> : null}
       {n.link ? <Text wrap="wrap">{'\n'}{n.link.then}</Text> : null}
       {/* A resume command is long and only ever pasted: the button copies it, unseen. */}
-      {n.command && n.action !== 'copy_resume_command' ? <Box marginTop={1}><Text bold>{n.command}</Text></Box> : null}
+      {n.command && n.action !== 'copy_resume_command' && !n.onPress ? <Box marginTop={1}><Text bold>{n.command}</Text></Box> : null}
       <Box flexDirection="row" gap={2} marginTop={1}>
         <Button
           key={n.action}
           variant="primary"
           label={n.label}
           onPress={(press: { surface: 'terminal' }) =>
-            act(n.action) || void $.ui.copy({ text: n.copy, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? (n.command ? 'Copied. Paste it in your terminal.' : 'Copied. Paste it to Claude.') : 'Could not copy'))
+            n.onPress ? n.onPress() : act(n.action) || void $.ui.copy({ text: n.copy, surface: press.surface }).then(r => $.ui.toast(r.isCopied ? (n.command ? 'Copied. Paste it in your terminal.' : 'Copied. Paste it to Claude.') : 'Could not copy'))
           }
         />
       </Box>
@@ -2372,6 +2461,13 @@ export const state = {
   // SHOW_YOUR_WORK_DEBUG=1 (see debug in telemetry.ts).
   isDebug: false,
   terminalName: '',
+  // CLAUDE_CODE_FORCE_TERMINAL_IMAGES was set when Claude Code started.
+  isForced: false,
+  // The person pressed Turn on pictures: the line is in their shell profile,
+  // and pictures show once Claude Code restarts.
+  isTurnedOn: false,
+  // Turned off again from the settings: the line is gone, from the next start.
+  isTurnedOff: false,
   // Usage stats: whether they're on, and the events waiting to go out.
   isOn: false,
   queue: [] as Event[],
@@ -2997,6 +3093,28 @@ function SettingRows(ui: Ui, $: EngineInterface) {
           })}
         </Box>
       ))}
+      {/* Only in a terminal where Claude Code leaves pictures off by default. */}
+      {SWITCHABLE[state.terminalName] && (
+        <Box key="row-pictures" flexDirection="row">
+          <Box width={24} flexShrink={0}><Text dimColor>{`Pictures in ${SWITCHABLE[state.terminalName]!.label}`}</Text></Box>
+          {(['On', 'Off'] as const).map((label, k) => {
+            const isChosen = arePicturesOn() === (k === 0)
+            const text = `${isChosen ? '●' : '○'} ${label}`
+            const press = () => void (k === 0 ? turnOnPictures($) : turnOffPictures($))
+            return (
+              <Box key={`slot-pictures-${k}`} width={k === 0 ? first : undefined} flexShrink={0}>
+                {state.canColourButtons ? (
+                  <Button key={`pictures-${k}`} plain label={text} onPress={press}>
+                    <Text color={k === 0 ? 'success' : 'claude'} dimColor={!isChosen}>{text}</Text>
+                  </Button>
+                ) : (
+                  <Button key={`pictures-${k}`} plain {...(isChosen ? {} : { dimColor: true })} label={text} onPress={press} />
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+      )}
       <Box marginTop={1}><Text dimColor>Usage data is anonymous and helps fix bugs and improve the product experience. No sensitive data is ever shared.</Text></Box>
     </Box>
   )
@@ -3372,6 +3490,7 @@ export const register: Register = on => {
       const term = (await $.env.get('TERM')) ?? ''
       const terminal = terminalOf({ program, term, kitty: !!(await $.env.get('KITTY_WINDOW_ID')), konsole: !!(await $.env.get('KONSOLE_VERSION')) })
       state.terminalName = terminal
+      state.isForced = !!(await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES'))
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
       state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
       if (state.isDebug) $.clock.every(1000, () => void flushDebug($))

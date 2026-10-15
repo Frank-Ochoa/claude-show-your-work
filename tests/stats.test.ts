@@ -52,8 +52,9 @@ test('a picture that cannot draw says why, and tells Claude it was not seen', ()
   // Herdr, like tmux, gets its own setting to copy.
   expect(causeOf(false, 'herdr')).toBe('herdr')
   expect(cantDraw('herdr', 'a.png', 'picture', 'id1').command).toBe('[terminal]\nkitty_graphics = true')
-  // Every kitty-protocol terminal counts, not just Ghostty.
-  for (const t of ['kitty', 'wezterm', 'warp', 'konsole']) expect(causeOf(false, t)).toBe('background')
+  // kitty draws once Claude Code allows it; Warp, WezTerm and Konsole need pictures turned on first.
+  expect(causeOf(false, 'kitty')).toBe('background')
+  for (const t of ['wezterm', 'warp', 'konsole']) expect(causeOf(false, t)).toBe('off')
   expect(cantDraw('terminal', 'a.png', 'picture', 'id1').text.includes('kitty graphics protocol')).toBe(true)
   expect(cantDraw('background', 'a.png', 'picture', 'id1').text.includes('Ghostty')).toBe(false)
   expect(cantDraw('tmux', 'a.png', 'picture', 'id1').command).toBe('set -g allow-passthrough on')
@@ -61,7 +62,7 @@ test('a picture that cannot draw says why, and tells Claude it was not seen', ()
   expect(cantDraw('terminal', 'a.png', 'picture', 'id1').link?.href).toBe('https://github.com/iamumeransari/claude-show-your-work#terminals')
   expect(cantDraw('terminal', 'a.png', 'picture', 'id1').claude.includes('#terminals')).toBe(true)
   expect(cantDraw('background', 'a.png', 'video', 'id1').command.includes('--resume id1')).toBe(true)
-  for (const cause of ['tmux', 'herdr', 'terminal', 'background'] as const) expect(cantDraw(cause, 'a.png', 'picture', '').claude.includes('saw a notice')).toBe(true)
+  for (const cause of ['tmux', 'herdr', 'terminal', 'background', 'off'] as const) expect(cantDraw(cause, 'a.png', 'picture', '').claude.includes('saw a notice')).toBe(true)
 })
 
 test('Linux gets its own ffmpeg notice, with a package manager instead of Homebrew', () => {

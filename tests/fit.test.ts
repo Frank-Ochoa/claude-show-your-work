@@ -6,7 +6,7 @@ import { isAtLeast } from '../hooks/setup'
 import { STOPS } from '../hooks/tour'
 import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, chunksBehind, chunksAhead, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
 import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
-import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord, openFailure } from '../hooks/player'
+import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord, openFailure, causeOf, profileOf, profileLine } from '../hooks/player'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -420,4 +420,25 @@ test('a file that will not open says why, in words', () => {
   // macOS open: exit 1, with its reason in the text.
   expect(openFailure({ exitCode: 1, stderr: 'No application knows how to open URL file:///a.xyz' }, 'pictures', at)).toBe("Couldn't open it: no app on this computer is set to open pictures.")
   expect(openFailure({ exitCode: 1, stderr: 'The file /a.png does not exist.' }, 'pictures', at)).toBe(`Couldn't open it: nothing is at ${at} any more.`)
+})
+
+test('Warp, WezTerm and Konsole get a way to turn pictures on; others keep their notice', () => {
+  expect(causeOf(false, 'warp')).toBe('off')
+  expect(causeOf(false, 'wezterm')).toBe('off')
+  expect(causeOf(false, 'konsole')).toBe('off')
+  // Already turned on and still not drawing: the terminal itself can't.
+  expect(causeOf(false, 'warp', true)).toBe('terminal')
+  expect(causeOf(false, 'ghostty')).toBe('background')
+  expect(causeOf(false, 'apple_terminal')).toBe('terminal')
+  expect(causeOf(true, 'warp')).toBe('tmux')
+})
+
+test('the line goes in the profile the shell reads, only inside that terminal', () => {
+  expect(profileOf('/bin/zsh', '/Users/a', true)).toBe('/Users/a/.zshrc')
+  expect(profileOf('/bin/bash', '/Users/a', true)).toBe('/Users/a/.bash_profile')
+  expect(profileOf('/bin/bash', '/home/a', false)).toBe('/home/a/.bashrc')
+  expect(profileOf('/usr/bin/fish', '/home/a', false)).toBe('/home/a/.config/fish/config.fish')
+  expect(profileOf('/bin/tcsh', '/home/a', false)).toBe(null)
+  expect(profileLine('warp', '/bin/zsh')).toBe('if [ "$TERM_PROGRAM" = "WarpTerminal" ]; then export CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1; fi # show-your-work: pictures in Warp')
+  expect(profileLine('konsole', '/usr/bin/fish')).toBe('if test -n "$KONSOLE_VERSION"; set -gx CLAUDE_CODE_FORCE_TERMINAL_IMAGES 1; end # show-your-work: pictures in Konsole')
 })
