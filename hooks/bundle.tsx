@@ -2659,10 +2659,10 @@ function jsonOf<T>(text: string | undefined, fallback: T): T {
   try { return text ? (JSON.parse(text) as T) : fallback } catch { return fallback }
 }
 
-// The automatic check at session start. It runs at most once a day, never
-// when SHOW_YOUR_WORK_AUTO_UPDATE=0 or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-// is set, and installs any newer version without asking. Claude Code loads
-// the new version from the next session.
+// The automatic check at session start: at most once a day, never when
+// SHOW_YOUR_WORK_AUTO_UPDATE=0 or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set. It installs any newer version without asking. Claude Code only loads
+// the new version in a new session, so once one is installed a status line
+// under the prompt says so until Claude Code restarts.
 export async function checkForUpdate($: EngineInterface, current: string, branch: Branch = BRANCHES.stable) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
   if (/^(0|false|off|no)$/i.test(off ?? '')) return
@@ -2671,7 +2671,8 @@ export async function checkForUpdate($: EngineInterface, current: string, branch
   if (now - Number((await $.store.get('updateCheckedAt')) ?? 0) < DAY_MS) return
   await $.store.set('updateCheckedAt', now)
   const found = await findUpdate($, current, branch)
-  if (found.kind === 'update' || found.kind === 'move') await installUpdate($, found, current)
+  const isReady = found.kind === 'pending' || ((found.kind === 'update' || found.kind === 'move') && (await installUpdate($, found, current)))
+  if (isReady && 'latest' in found) $.ui.status(`show-your-work ${found.latest} is ready. Restart Claude Code to use it.`)
 }
 
 // The result of checking for an update:

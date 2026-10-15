@@ -10,6 +10,7 @@ function engine(o: { latest?: string; installed?: string; source?: string; ref?:
   let installed = o.installed ?? '0.5.0'
   let installFails = o.installFails ?? (o.installFailsOnce ? 1 : 0)
   const toasts: string[] = []
+  const statuses: string[] = []
   const store = new Map<string, unknown>(o.checkedAt ? [['updateCheckedAt', o.checkedAt]] : [])
   const $ = {
     env: { get: async (name: string) => o.env?.[name] },
@@ -19,7 +20,7 @@ function engine(o: { latest?: string; installed?: string; source?: string; ref?:
       fetched.push(url)
       return { ok: true, status: 200, headers: {}, text: JSON.stringify({ version: o.latest ?? '0.6.0' }) }
     } },
-    ui: { toast: (t: string) => void toasts.push(t) },
+    ui: { toast: (t: string) => void toasts.push(t), status: (t: string | undefined) => void statuses.push(t ?? '') },
     process: {
       run: async (argv: string[]) => {
         if (o.missingBinaries?.includes(argv[0]!)) throw new Error('ENOENT')
@@ -39,7 +40,7 @@ function engine(o: { latest?: string; installed?: string; source?: string; ref?:
     },
   }
 
-  return { $: $ as never, runs, toasts, store, fetched }
+  return { $: $ as never, runs, toasts, statuses, store, fetched }
 }
 const args = (runs: string[][]) => runs.map(r => r.slice(1).join(' '))
 
@@ -53,6 +54,8 @@ test('a newer version on GitHub gets installed quietly, for the next session', a
     'plugin update show-your-work@iamumeransari --scope user',
   ])
   expect(e.toasts.length).toBe(0)
+  // Installed: a line under the prompt says a restart picks it up.
+  expect(e.statuses).toEqual(['show-your-work 0.6.0 is ready. Restart Claude Code to use it.'])
 })
 
 test('nothing is installed when GitHub has the same version', async () => {
