@@ -186,7 +186,7 @@ No, it doesn't take up much space. It keeps recent pictures and videos so you ca
 <details>
 <summary><b>Does it collect any data?</b></summary>
 
-You choose whether to share anonymous usage data. You can make that choice during the onboarding, or change it any time with `/show-your-work`. It never collects any sensitive data whatsoever.
+You choose whether to share anonymous usage data. You can make that choice during the onboarding, or change it any time with `/show-your-work`. It never collects any sensitive data whatsoever. The details are in the [Privacy policy](PRIVACY.md).
 
 </details>
 
@@ -264,6 +264,6 @@ If you want Claude Code to show you screenshots, screen recordings or before-and
 
 ## License
 
-[MIT](LICENSE). Photography in the examples is from [Unsplash](https://unsplash.com), used under the Unsplash License.
+[MIT](LICENSE). Photography in the examples is from [Unsplash](https://unsplash.com), used under the Unsplash License. [Privacy](PRIVACY.md).
 
 <p align="center"><a href="#install"><img src="docs/end-card.jpg" alt="show-your-work, with the install commands" width="100%"></a></p>
